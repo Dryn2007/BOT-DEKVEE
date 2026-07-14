@@ -39,7 +39,6 @@ class Leveling(commands.Cog):
         if target_role not in member.roles:
             await member.add_roles(target_role)
 
-    # --- UPDATE: Fungsi pengumuman dinamis ---
     async def send_levelup_announcement(self, member, level, is_rank_up=False):
         channel = self.bot.get_channel(1526479863811149954)
         if channel:
@@ -58,7 +57,6 @@ class Leveling(commands.Cog):
             embed.set_thumbnail(url=member.display_avatar.url)
             await channel.send(embed=embed)
 
-    # --- UPDATE: Logika pengecekan level & rank yang lebih presisi ---
     async def give_xp(self, user_id, amount, member=None):
         # 1. Ambil data level ASLI sebelum XP ditambahkan
         old_data = await self.pool.fetchrow("SELECT level FROM levels WHERE user_id = $1", user_id)
@@ -149,7 +147,6 @@ class Leveling(commands.Cog):
         
         # --- MEMBUAT GAMBAR RANK CARD (EASY-PIL) ---
         
-        # Background dasar (Gelap metalik)
         background = Editor(Canvas((900, 300), color="#1A1C1E"))
         
         # Tarik avatar user dari discord
@@ -157,42 +154,37 @@ class Leveling(commands.Cog):
         profile = await load_image_async(str(avatar_url))
         profile = Editor(profile).resize((200, 200)).circle_image()
         
-        # Tempel avatar
         background.paste(profile, (50, 50))
         
-        # --- UPDATE FONT & UKURAN ---
-        # Font sedikit disesuaikan agar tidak gampang nabrak
-        poppins_large = Font.poppins(size=45, variant="bold") 
-        poppins_medium = Font.poppins(size=32, variant="bold")
-        poppins_small = Font.poppins(size=25)
-        poppins_badge = Font.poppins(size=22, variant="bold") # Font khusus untuk shape Level
+        # --- FONT & UKURAN DIPERBAIKI ---
+        poppins_large = Font.poppins(size=40, variant="bold") # Diperkecil sedikit
+        poppins_medium = Font.poppins(size=30, variant="bold")
+        poppins_small = Font.poppins(size=22) # Font XP diperkecil agar aman
+        poppins_badge = Font.poppins(size=22, variant="bold")
         
-        # --- UPDATE: PENCEGAHAN OVERLAP NAMA ---
-        # Jika nama lebih dari 13 karakter, potong dan tambahkan "..."
+        # --- POTONG NAMA JIKA TERLALU PANJANG ---
         user_name = str(ctx.author.name)
-        if len(user_name) > 13:
-            user_name = user_name[:13] + "..."
+        if len(user_name) > 15:
+            user_name = user_name[:12] + "..."
 
         # Tulis Nama User (Kiri Atas)
         background.text((280, 70), user_name, font=poppins_large, color="white")
         
-        # Tulis Status XP (Kanan Atas) -> Dipindah ke atas agar tidak nabrak Level
-        background.text((850, 85), f"{xp} / {xp_needed} XP", font=poppins_small, color="#C0C0C0", align="right")
-        
-        # Tulis Role Hunter (Kiri Bawah)
+        # --- SHAPE/BADGE UNTUK LEVEL (Kanan Atas) ---
+        # Dipindah ke atas agar aman dari nama yang panjang
+        background.rectangle((730, 70), width=120, height=45, color="#DAA520", radius=15)
+        background.text((790, 82), f"LVL {lvl}", font=poppins_badge, color="#1A1C1E", align="center")
+
+        # Tulis Role Hunter (Kiri Tengah)
         role_name = self.get_rank_role(lvl)
-        background.text((280, 140), role_name, font=poppins_medium, color="#FFD700") 
+        background.text((280, 145), role_name, font=poppins_medium, color="#FFD700") 
         
-        # --- UPDATE BARU: SHAPE/BADGE UNTUK LEVEL (Kanan Bawah) ---
-        # Membuat shape/kotak berwarna Emas Gelap
-        background.rectangle((730, 130), width=120, height=45, color="#DAA520", radius=15)
-        # Teks Level di-center ke dalam kotak tersebut dengan warna sangat gelap
-        background.text((790, 142), f"LVL {lvl}", font=poppins_badge, color="#1A1C1E", align="center")
+        # Tulis Status XP (Kanan Tengah)
+        # Dipindah ke bawah menemani Role Hunter agar tidak bertabrakan dengan Nama
+        background.text((850, 150), f"{xp} / {xp_needed} XP", font=poppins_small, color="#C0C0C0", align="right")
         
         # Gambar Progress Bar Premium
-        # Background bar (kosong) dengan bingkai tebal
         background.rectangle((280, 200), width=570, height=50, color="#2F3136", radius=25)
-        # Bar yang terisi (Emas gelap)
         background.bar((280, 200), max_width=570, height=50, percentage=percentage, color="#DAA520", radius=25)
         
         # Teks persentase di tengah bar
@@ -202,7 +194,7 @@ class Leveling(commands.Cog):
         file = discord.File(fp=background.image_bytes, filename="rank.png")
         msg = await ctx.send(file=file)
         
-        # (Opsional) Gambar rank card ini akan dihapus setelah 20 detik agar chat tidak penuh
+        # Hapus setelah 20 detik
         await asyncio.sleep(20)
         await msg.delete()
 
