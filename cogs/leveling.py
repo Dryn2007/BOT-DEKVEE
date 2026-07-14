@@ -43,9 +43,9 @@ class Leveling(commands.Cog):
         channel = self.bot.get_channel(1526479863811149954)
         if channel:
             embed = discord.Embed(
-                title="🏆 Level Up!",
-                description=f"Selamat {member.mention}! Kamu naik ke **Level {level}** dan menjadi **{self.get_rank_role(level)}**!",
-                color=discord.Color.gold() # Ubah jadi warna gold biar premium
+                title="🎉 Rank Up!",
+                description=f"Luar biasa {member.mention}! Kamu telah mencapai **Level {level}** dan berevolusi menjadi **{self.get_rank_role(level)}**!",
+                color=discord.Color.gold()
             )
             embed.set_thumbnail(url=member.display_avatar.url)
             await channel.send(embed=embed)
@@ -60,10 +60,16 @@ class Leveling(commands.Cog):
             await self.update_role(member, new_level)
             
             if leveled_up:
-                await self.send_levelup_announcement(member, new_level)
-                try:
-                    await member.send(f"Selamat! Kamu naik ke level **{new_level}** ({self.get_rank_role(new_level)})!")
-                except: pass
+                # Cek role di level sebelumnya vs level sekarang
+                old_rank = self.get_rank_role(new_level - 1)
+                new_rank = self.get_rank_role(new_level)
+                
+                # Pengumuman HANYA dikirim jika Rank berubah
+                if old_rank != new_rank:
+                    await self.send_levelup_announcement(member, new_level)
+                    try:
+                        await member.send(f"Selamat! Rank kamu naik menjadi **{new_rank}** (Level {new_level})!")
+                    except: pass
         
         return new_level
 
@@ -140,10 +146,10 @@ class Leveling(commands.Cog):
         poppins_medium = Font.poppins(size=35, variant="bold")
         poppins_small = Font.poppins(size=25)
         
-        # Tulis Nama User dan Role Hunter (Warna Emas)
+        # Tulis Nama User dan Role Hunter (Warna Emas) - EMOJI PEDANG DIHAPUS
         role_name = self.get_rank_role(lvl)
         background.text((280, 80), str(ctx.author.name), font=poppins_large, color="white")
-        background.text((280, 140), f"🗡️ {role_name}", font=poppins_medium, color="#FFD700") 
+        background.text((280, 140), role_name, font=poppins_medium, color="#FFD700") 
         
         # Tulis Status Level dan XP (Warna Abu Metalik)
         background.text((850, 80), f"Level {lvl}", font=poppins_large, color="white", align="right")
