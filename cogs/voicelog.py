@@ -23,7 +23,7 @@ class VoiceLog(commands.Cog):
         ''')
         
         # 2. Jalankan tugas sinkronisasi otomatis saat bot baru menyala
-        self.bot.loop.create_task(self.sync_active_sessions())
+        asyncio.create_task(self.sync_active_sessions())
 
     async def sync_active_sessions(self):
         """Fitur baru: Memasukkan user yang sudah ada di VC saat bot restart"""
