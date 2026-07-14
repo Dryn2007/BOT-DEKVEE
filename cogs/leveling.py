@@ -160,19 +160,34 @@ class Leveling(commands.Cog):
         # Tempel avatar
         background.paste(profile, (50, 50))
         
-        # Font premium
-        poppins_large = Font.poppins(size=50, variant="bold")
-        poppins_medium = Font.poppins(size=35, variant="bold")
+        # --- UPDATE FONT & UKURAN ---
+        # Font sedikit disesuaikan agar tidak gampang nabrak
+        poppins_large = Font.poppins(size=45, variant="bold") 
+        poppins_medium = Font.poppins(size=32, variant="bold")
         poppins_small = Font.poppins(size=25)
+        poppins_badge = Font.poppins(size=22, variant="bold") # Font khusus untuk shape Level
         
-        # Tulis Nama User dan Role Hunter (Warna Emas) - EMOJI PEDANG DIHAPUS
+        # --- UPDATE: PENCEGAHAN OVERLAP NAMA ---
+        # Jika nama lebih dari 13 karakter, potong dan tambahkan "..."
+        user_name = str(ctx.author.name)
+        if len(user_name) > 13:
+            user_name = user_name[:13] + "..."
+
+        # Tulis Nama User (Kiri Atas)
+        background.text((280, 70), user_name, font=poppins_large, color="white")
+        
+        # Tulis Status XP (Kanan Atas) -> Dipindah ke atas agar tidak nabrak Level
+        background.text((850, 85), f"{xp} / {xp_needed} XP", font=poppins_small, color="#C0C0C0", align="right")
+        
+        # Tulis Role Hunter (Kiri Bawah)
         role_name = self.get_rank_role(lvl)
-        background.text((280, 80), str(ctx.author.name), font=poppins_large, color="white")
         background.text((280, 140), role_name, font=poppins_medium, color="#FFD700") 
         
-        # Tulis Status Level dan XP (Warna Abu Metalik)
-        background.text((850, 80), f"Level {lvl}", font=poppins_large, color="white", align="right")
-        background.text((850, 140), f"{xp} / {xp_needed} XP", font=poppins_small, color="#C0C0C0", align="right")
+        # --- UPDATE BARU: SHAPE/BADGE UNTUK LEVEL (Kanan Bawah) ---
+        # Membuat shape/kotak berwarna Emas Gelap
+        background.rectangle((730, 130), width=120, height=45, color="#DAA520", radius=15)
+        # Teks Level di-center ke dalam kotak tersebut dengan warna sangat gelap
+        background.text((790, 142), f"LVL {lvl}", font=poppins_badge, color="#1A1C1E", align="center")
         
         # Gambar Progress Bar Premium
         # Background bar (kosong) dengan bingkai tebal
@@ -181,7 +196,7 @@ class Leveling(commands.Cog):
         background.bar((280, 200), max_width=570, height=50, percentage=percentage, color="#DAA520", radius=25)
         
         # Teks persentase di tengah bar
-        background.text((280 + (570/2), 225), f"{percentage:.1f}% Complete", font=Font.poppins(size=18, variant="bold"), color="#1A1C1E", align="center")
+        background.text((280 + (570/2), 213), f"{percentage:.1f}% Complete", font=Font.poppins(size=18, variant="bold"), color="#1A1C1E", align="center")
         
         # Kirim hasil akhir gambar
         file = discord.File(fp=background.image_bytes, filename="rank.png")
