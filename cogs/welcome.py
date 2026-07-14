@@ -31,16 +31,22 @@ class RoleButton(discord.ui.Button):
             await interaction.response.send_message(f"⚠️ Eits, tombol ini khusus untuk {target_member.mention}! Tunggu giliran welcome-mu sendiri ya.", ephemeral=True)
             return
 
-        # 2. PROSES PEMBERIAN ROLE
+        # 2. TAHAN INTERAKSI (Mencegah error "This interaction failed" karena timeout)
+        await interaction.response.defer(ephemeral=True)
+
+        # 3. PROSES PEMBERIAN ROLE JURUSAN
         role = discord.utils.get(interaction.guild.roles, name=self.role_name)
         if not role:
-            await interaction.response.send_message(f"Role **{self.role_name}** belum dibuat di server!", ephemeral=True)
+            await interaction.followup.send(f"⚠️ Role **{self.role_name}** belum dibuat di server!", ephemeral=True)
             return
 
-        await target_member.add_roles(role)
+        try:
+            await target_member.add_roles(role)
+        except discord.Forbidden:
+            await interaction.followup.send("❌ **GAGAL:** Bot tidak punya izin! Pastikan role Bot DekVee berada di atas role jurusan.", ephemeral=True)
+            return
 
-        # 3. SIMPAN USERNAME KE DATABASE (Kunci Permanen)
-        # Menggunakan member.name (Username Global Discord sesuai permintaan)
+        # 4. SIMPAN USERNAME KE DATABASE (Kunci Permanen)
         try:
             await bot.pool.execute(
                 "INSERT INTO maba_roles (username, role_name) VALUES ($1, $2)",
@@ -49,9 +55,13 @@ class RoleButton(discord.ui.Button):
         except Exception as e:
             print(f"Database error saat menyimpan role maba: {e}")
 
-        # 4. HAPUS PESAN WELCOME & BERI KONFIRMASI
-        await interaction.message.delete()
-        await interaction.response.send_message(f"🎉 Mantap! Kamu resmi masuk program studi **{self.role_name}**. Silakan cek private room kelasmu di sebelah kiri!", ephemeral=True)
+        # 5. HAPUS PESAN WELCOME & BERI KONFIRMASI
+        await interaction.followup.send(f"🎉 Mantap! Kamu resmi masuk program studi **{self.role_name}**. Silakan cek private room kelasmu di sebelah kiri!", ephemeral=True)
+        
+        try:
+            await interaction.message.delete()
+        except Exception:
+            pass
 
 
 class Welcome(commands.Cog):
@@ -69,6 +79,17 @@ class Welcome(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
+        # --- FITUR BARU: BERIKAN ROLE "MEMBER" SECARA OTOMATIS ---
+        default_role = discord.utils.get(member.guild.roles, name="MEMBER")
+        if default_role:
+            try:
+                await member.add_roles(default_role)
+            except discord.Forbidden:
+                print("Gagal memberikan role MEMBER. Pastikan role bot DekVee berada di atas role MEMBER.")
+            except Exception as e:
+                print(f"Error pemberian role MEMBER: {e}")
+        # ---------------------------------------------------------
+
         # MASUKKAN ID ROOM 🎒・registrasi-maba DI SINI
         WELCOME_CHANNEL_ID = 1526567698627035246
         channel = self.bot.get_channel(WELCOME_CHANNEL_ID)
