@@ -54,8 +54,6 @@ class HelpView(discord.ui.View):
         if self.message:
             try:
                 await self.message.delete()
-            except discord.NotFound:
-                pass
             except Exception:
                 pass
 
@@ -63,46 +61,46 @@ class HelpView(discord.ui.View):
 class HelpMenu(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Nonaktifkan command help bawaan Discord secara otomatis
+        # Nonaktifkan command help bawaan Discord
         self.bot.remove_command('help')
+        # Melacak pesan embed help yang sedang aktif agar tidak numpuk
+        self.active_msg = None 
 
-    # --- FITUR BARU: AUTO-DELETE PESAN SELAIN !HELP ---
+    # --- FITUR AUTO-DELETE SUPER KETAT ---
     @commands.Cog.listener()
     async def on_message(self, message):
-        # Abaikan pesan dari bot itu sendiri
-        if message.author.bot:
-            return
-
         ROOM_HELP_ID = 1526498364932227092
 
         # Cek apakah pesan dikirim di room khusus command-center
         if message.channel.id == ROOM_HELP_ID:
-            # Jika isi pesannya BUKAN "!help" (mengabaikan huruf besar/kecil dan spasi tambahan)
-            if message.content.strip().lower() != "!help":
-                try:
-                    # Langsung hapus tanpa peringatan
-                    await message.delete()
-                except discord.Forbidden:
-                    pass # Abaikan jika bot tidak punya izin hapus pesan
-                except Exception:
-                    pass
+            # 1. Biarkan pesan dari bot itu sendiri (Menu Embed)
+            if message.author == self.bot.user:
+                return
+            
+            # 2. Jika bukan dari bot (berarti dari user atau bot lain), LANGSUNG HAPUS!
+            # (Ini akan menghapus tulisan "!help" maupun ketikan spam yang panjang)
+            try:
+                await message.delete()
+            except Exception:
+                pass
 
     @commands.command()
+    @commands.cooldown(1, 3, commands.BucketType.channel) # Cooldown 3 detik per channel anti-spam
     async def help(self, ctx):
-        # Pastikan command ini HANYA bisa dipakai di room khusus
         ROOM_HELP_ID = 1526498364932227092
         
-        # Hapus chat "!help" dari user agar room selalu bersih
-        try:
-            await ctx.message.delete()
-        except discord.Forbidden:
-            pass
-
         # Jika user mengetik di room yang salah, bot tidak merespon
         if ctx.channel.id != ROOM_HELP_ID:
             return
 
-        # Buat dan kirim embed awal beserta Dropdown Menu
+        # Jika ada menu help sebelumnya yang masih nangkring, hapus dulu agar bersih!
+        if self.active_msg:
+            try:
+                await self.active_msg.delete()
+            except Exception:
+                pass
+
+        # Buat dan kirim embed baru
         embed = discord.Embed(
             title="🛠️ Pusat Bantuan DekVee",
             description="Pilih menu di bawah ini untuk melihat detail fitur dan cara menggunakannya!\n\n*(Pesan ini akan menghilang otomatis dalam 10 detik jika tidak digunakan)*",
@@ -112,8 +110,17 @@ class HelpMenu(commands.Cog):
         view = HelpView()
         msg = await ctx.send(embed=embed, view=view)
         
-        # Simpan referensi pesan ke dalam view agar bisa dihapus saat timeout
+        # Simpan pesan baru ini ke memori bot
+        self.active_msg = msg
         view.message = msg
+
+    # --- ERROR HANDLER UNTUK SPAM ---
+    @help.error
+    async def help_error(self, ctx, error):
+        # Jika user nge-spam command !help dan terkena cooldown, 
+        # bot akan diam saja tanpa mengirim error log.
+        if isinstance(error, commands.CommandOnCooldown):
+            pass
 
 # FUNGSI SETUP
 async def setup(bot):
