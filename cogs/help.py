@@ -90,7 +90,7 @@ class HelpMenu(commands.Cog):
     @commands.command()
     async def help(self, ctx):
         # Pastikan command ini HANYA bisa dipakai di room khusus
-        ROOM_HELP_ID = 1526500610726428802
+        ROOM_HELP_ID = 1526498364932227092
         
         # Hapus chat "!help" dari user agar room selalu bersih
         try:
