@@ -3,7 +3,7 @@ from discord.ext import commands
 from datetime import datetime
 import asyncpg
 import os
-import asyncio # Tambahkan ini untuk fungsi delay (sleep)
+import asyncio
 
 class VoiceLog(commands.Cog):
     def __init__(self, bot, pool):
@@ -12,6 +12,7 @@ class VoiceLog(commands.Cog):
         self.voice_sessions = {}
 
     async def cog_load(self):
+        # 1. Buat tabel jika belum ada
         await self.pool.execute('''
             CREATE TABLE IF NOT EXISTS history (
                 tanggal TEXT,
@@ -20,6 +21,25 @@ class VoiceLog(commands.Cog):
                 durasi REAL
             )
         ''')
+        
+        # 2. Jalankan tugas sinkronisasi otomatis saat bot baru menyala
+        self.bot.loop.create_task(self.sync_active_sessions())
+
+    async def sync_active_sessions(self):
+        """Fitur baru: Memasukkan user yang sudah ada di VC saat bot restart"""
+        # Tunggu sampai cache bot siap membaca data server
+        await self.bot.wait_until_ready()
+        
+        for guild in self.bot.guilds:
+            for vc in guild.voice_channels:
+                for member in vc.members:
+                    # Masukkan member ke sistem log jika dia bukan bot dan belum tercatat
+                    if not member.bot and member.id not in self.voice_sessions:
+                        self.voice_sessions[member.id] = {
+                            "start_time": datetime.now(),
+                            "channel_id": vc.id
+                        }
+        print("✅ Sinkronisasi Voice Channel selesai! User aktif berhasil dilacak ulang.")
 
     def get_today_date(self):
         return datetime.now().strftime('%Y-%m-%d')
@@ -85,11 +105,11 @@ class VoiceLog(commands.Cog):
 
     @commands.command()
     async def vclog(self, ctx, arg=None):
-        # 1. Hapus chat/perintah dari user secara instan
+        # 1. Hapus pesan/chat perintah dari user secara instan
         try:
             await ctx.message.delete()
         except discord.Forbidden:
-            pass # Lewati jika bot tidak memiliki izin Manage Messages
+            pass 
         except Exception:
             pass
 
@@ -104,10 +124,8 @@ class VoiceLog(commands.Cog):
             if not tanggal_tersedia:
                 msg = await ctx.send("Belum ada data history yang tersimpan.")
                 await asyncio.sleep(10)
-                try:
-                    await msg.delete()
-                except Exception:
-                    pass
+                try: await msg.delete() 
+                except: pass
                 return
             
             view = HistoryView(self, tanggal_tersedia)
@@ -151,7 +169,6 @@ class HistoryDropdown(discord.ui.Select):
         sesi_realtime = self.cog_instance.voice_sessions if tanggal_dipilih == self.cog_instance.get_today_date() else None
         embed = self.cog_instance.build_embed(f"📜 History VC: {tanggal_dipilih}", data_history, sesi_realtime)
         
-        # Tampilkan hasil dan hilangkan dropdown menu
         await interaction.response.edit_message(content=f"Menampilkan data untuk **{tanggal_dipilih}**:", embed=embed, view=None)
 
         # 3. Hapus embed balasan history setelah 30 detik dari saat user memilih
@@ -164,13 +181,11 @@ class HistoryDropdown(discord.ui.Select):
 
 class HistoryView(discord.ui.View):
     def __init__(self, cog_instance, tanggal_list):
-        # Timeout 30 detik. Jika user tidak memilih, menu akan hangus.
         super().__init__(timeout=30.0) 
         self.message = None
         self.add_item(HistoryDropdown(cog_instance, tanggal_list))
 
     async def on_timeout(self):
-        # Menghapus pesan dropdown history otomatis jika user diam saja selama 30 detik
         if self.message:
             try:
                 await self.message.delete()
@@ -178,6 +193,5 @@ class HistoryView(discord.ui.View):
                 pass
 
 
-# FUNGSI SETUP
 async def setup(bot):
     await bot.add_cog(VoiceLog(bot, bot.pool))
