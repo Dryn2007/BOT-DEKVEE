@@ -3,6 +3,7 @@ from discord.ext import commands
 from datetime import datetime
 import asyncpg
 import os
+import asyncio # Tambahkan ini untuk fungsi delay (sleep)
 
 class VoiceLog(commands.Cog):
     def __init__(self, bot, pool):
@@ -84,33 +85,61 @@ class VoiceLog(commands.Cog):
 
     @commands.command()
     async def vclog(self, ctx, arg=None):
+        # 1. Hapus chat/perintah dari user secara instan
+        try:
+            await ctx.message.delete()
+        except discord.Forbidden:
+            pass # Lewati jika bot tidak memiliki izin Manage Messages
+        except Exception:
+            pass
+
         tanggal_hari_ini = self.get_today_date()
+        
         if arg and arg.lower() == "history":
             records = await self.pool.fetch("SELECT DISTINCT tanggal FROM history ORDER BY tanggal DESC LIMIT 25")
             tanggal_tersedia = [row['tanggal'] for row in records]
             if tanggal_hari_ini not in tanggal_tersedia and self.voice_sessions:
                 tanggal_tersedia.insert(0, tanggal_hari_ini)
+            
             if not tanggal_tersedia:
-                await ctx.send("Belum ada data history yang tersimpan.")
+                msg = await ctx.send("Belum ada data history yang tersimpan.")
+                await asyncio.sleep(10)
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
                 return
+            
             view = HistoryView(self, tanggal_tersedia)
-            await ctx.send("Pilih tanggal history yang ingin kamu lihat:", view=view)
+            msg = await ctx.send("Pilih tanggal history yang ingin kamu lihat:", view=view)
+            
+            # Simpan referensi pesan ke dalam view agar bisa dihapus jika timeout
+            view.message = msg 
+            
         else:
             records = await self.pool.fetch("SELECT channel_id, user_id, SUM(durasi) as total_durasi FROM history WHERE tanggal = $1 GROUP BY channel_id, user_id", tanggal_hari_ini)
             data_hari_ini = {row['channel_id']: {row['user_id']: row['total_durasi']} for row in records}
-            # Perbaikan sederhana untuk penggabungan data dictionary
             for row in records:
                 if row['channel_id'] not in data_hari_ini: data_hari_ini[row['channel_id']] = {}
                 data_hari_ini[row['channel_id']][row['user_id']] = row['total_durasi']
             
             embed = self.build_embed(f"📊 Statistik VC: Hari Ini ({tanggal_hari_ini})", data_hari_ini, self.voice_sessions)
-            await ctx.send(embed=embed)
+            msg = await ctx.send(embed=embed)
+            
+            # 2. Hapus embed balasan hari ini setelah 30 detik
+            await asyncio.sleep(30)
+            try:
+                await msg.delete()
+            except:
+                pass
+
 
 class HistoryDropdown(discord.ui.Select):
     def __init__(self, cog_instance, tanggal_list):
         self.cog_instance = cog_instance
         opsi = [discord.SelectOption(label=tgl, description=f"Lihat statistik pada {tgl}") for tgl in tanggal_list]
         super().__init__(placeholder="Pilih Tanggal History...", min_values=1, max_values=1, options=opsi)
+
     async def callback(self, interaction: discord.Interaction):
         tanggal_dipilih = self.values[0]
         records = await self.cog_instance.pool.fetch("SELECT channel_id, user_id, SUM(durasi) as total_durasi FROM history WHERE tanggal = $1 GROUP BY channel_id, user_id", tanggal_dipilih)
@@ -118,16 +147,37 @@ class HistoryDropdown(discord.ui.Select):
         for row in records:
             if row['channel_id'] not in data_history: data_history[row['channel_id']] = {}
             data_history[row['channel_id']][row['user_id']] = row['total_durasi']
+        
         sesi_realtime = self.cog_instance.voice_sessions if tanggal_dipilih == self.cog_instance.get_today_date() else None
         embed = self.cog_instance.build_embed(f"📜 History VC: {tanggal_dipilih}", data_history, sesi_realtime)
+        
+        # Tampilkan hasil dan hilangkan dropdown menu
         await interaction.response.edit_message(content=f"Menampilkan data untuk **{tanggal_dipilih}**:", embed=embed, view=None)
+
+        # 3. Hapus embed balasan history setelah 30 detik dari saat user memilih
+        await asyncio.sleep(30)
+        try:
+            await interaction.message.delete()
+        except:
+            pass
+
 
 class HistoryView(discord.ui.View):
     def __init__(self, cog_instance, tanggal_list):
-        super().__init__(timeout=120) 
+        # Timeout 30 detik. Jika user tidak memilih, menu akan hangus.
+        super().__init__(timeout=30.0) 
+        self.message = None
         self.add_item(HistoryDropdown(cog_instance, tanggal_list))
+
+    async def on_timeout(self):
+        # Menghapus pesan dropdown history otomatis jika user diam saja selama 30 detik
+        if self.message:
+            try:
+                await self.message.delete()
+            except:
+                pass
+
 
 # FUNGSI SETUP
 async def setup(bot):
-    # Langsung gunakan bot.pool yang sudah kita buat di main.py
     await bot.add_cog(VoiceLog(bot, bot.pool))
