@@ -107,4 +107,5 @@ class Leveling(commands.Cog):
         await ctx.send(msg)
 
 async def setup(bot):
+    # Langsung gunakan bot.pool yang sudah kita buat di main.py
     await bot.add_cog(Leveling(bot, bot.pool))

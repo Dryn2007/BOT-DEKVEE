@@ -127,11 +127,7 @@ class HistoryView(discord.ui.View):
         super().__init__(timeout=120) 
         self.add_item(HistoryDropdown(cog_instance, tanggal_list))
 
-# FUNGSI SETUP (WAJIB ADA)
+# FUNGSI SETUP
 async def setup(bot):
-    db_url = os.getenv("DATABASE_URL")
-    if not db_url:
-        print("⚠️ DATABASE_URL TIDAK DITEMUKAN!")
-        return
-    pool = await asyncpg.create_pool(db_url)
-    await bot.add_cog(VoiceLog(bot, pool))
+    # Langsung gunakan bot.pool yang sudah kita buat di main.py
+    await bot.add_cog(VoiceLog(bot, bot.pool))
