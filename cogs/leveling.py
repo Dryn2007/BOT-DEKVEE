@@ -39,37 +39,58 @@ class Leveling(commands.Cog):
         if target_role not in member.roles:
             await member.add_roles(target_role)
 
-    async def send_levelup_announcement(self, member, level):
+    # --- UPDATE: Fungsi pengumuman dinamis ---
+    async def send_levelup_announcement(self, member, level, is_rank_up=False):
         channel = self.bot.get_channel(1526479863811149954)
         if channel:
+            if is_rank_up:
+                title_text = "🎉 Rank Up!"
+                desc_text = f"Luar biasa {member.mention}! Kamu telah mencapai **Level {level}** dan berevolusi menjadi **{self.get_rank_role(level)}**!"
+            else:
+                title_text = "🏆 Level Up!"
+                desc_text = f"Selamat {member.mention}! Kamu naik ke **Level {level}**!"
+
             embed = discord.Embed(
-                title="🎉 Rank Up!",
-                description=f"Luar biasa {member.mention}! Kamu telah mencapai **Level {level}** dan berevolusi menjadi **{self.get_rank_role(level)}**!",
+                title=title_text,
+                description=desc_text,
                 color=discord.Color.gold()
             )
             embed.set_thumbnail(url=member.display_avatar.url)
             await channel.send(embed=embed)
 
+    # --- UPDATE: Logika pengecekan level & rank yang lebih presisi ---
     async def give_xp(self, user_id, amount, member=None):
+        # 1. Ambil data level ASLI sebelum XP ditambahkan
+        old_data = await self.pool.fetchrow("SELECT level FROM levels WHERE user_id = $1", user_id)
+        old_level = old_data['level'] if old_data else 1
+        
+        # 2. Tambahkan XP via database
         result = await self.pool.fetchrow("SELECT * FROM add_xp($1, $2)", user_id, amount)
         new_level = result['new_level']
-        leveled_up = result['leveled_up']
         
         if member:
-            # Force update role
+            # Force update role ke level yang baru
             await self.update_role(member, new_level)
             
-            if leveled_up:
-                # Cek role di level sebelumnya vs level sekarang
-                old_rank = self.get_rank_role(new_level - 1)
+            # 3. Cek apakah levelnya benar-benar naik
+            if new_level > old_level:
+                # 4. Bandingkan Rank Asli (Lama) vs Rank Baru
+                old_rank = self.get_rank_role(old_level)
                 new_rank = self.get_rank_role(new_level)
                 
-                # Pengumuman HANYA dikirim jika Rank berubah
-                if old_rank != new_rank:
-                    await self.send_levelup_announcement(member, new_level)
-                    try:
-                        await member.send(f"Selamat! Rank kamu naik menjadi **{new_rank}** (Level {new_level})!")
-                    except: pass
+                # Menentukan apakah momen ini merubah Rank atau tidak
+                is_rank_up = old_rank != new_rank
+                
+                # Kirim pengumuman dinamis
+                await self.send_levelup_announcement(member, new_level, is_rank_up)
+                
+                try:
+                    if is_rank_up:
+                        await member.send(f"Selamat! Kamu naik ke Level {new_level} dan Rank kamu naik menjadi **{new_rank}**!")
+                    else:
+                        await member.send(f"Selamat! Kamu naik ke **Level {new_level}**!")
+                except: 
+                    pass
         
         return new_level
 
@@ -83,9 +104,8 @@ class Leveling(commands.Cog):
         self.cooldowns[message.author.id] = datetime.now()
         await self.give_xp(message.author.id, 2, message.author)
 
-    # --- COMMAND BARU UNTUK TESTING ---
     @commands.command()
-    @commands.has_permissions(administrator=True) # Dibatasi hanya untuk Admin
+    @commands.has_permissions(administrator=True)
     async def testxp(self, ctx, amount: int):
         """Fitur untuk ngetest naik level secara instan (Admin Only)"""
         try:
@@ -99,7 +119,6 @@ class Leveling(commands.Cog):
         msg = await ctx.send(f"🔧 **Test Mode:** Berhasil menyuntikkan `{amount} XP` ke {ctx.author.mention}! (Sekarang Level: **{new_level}**)")
         await asyncio.sleep(5)
         await msg.delete()
-    # ----------------------------------
 
     @commands.command()
     async def rank(self, ctx):
@@ -107,7 +126,7 @@ class Leveling(commands.Cog):
         try:
             await ctx.message.delete()
         except discord.Forbidden:
-            pass # Lewati jika bot tidak punya akses hapus pesan
+            pass
         except Exception:
             pass
 
