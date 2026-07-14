@@ -1,28 +1,118 @@
 import discord
 from discord.ext import commands
-import os
-from dotenv import load_dotenv
+import asyncpg
 
-load_dotenv()
-CHANNEL_ID = int(os.getenv('WELCOME_CHANNEL_ID'))
+class WelcomeRoleView(discord.ui.View):
+    def __init__(self, target_member, bot):
+        # timeout=None agar pesan tidak hilang/kadaluarsa kalau maba lama mikir
+        super().__init__(timeout=None)
+        self.target_member = target_member
+        self.bot = bot
+        
+        # Tombol-tombol jurusan
+        self.add_item(RoleButton("DKV", "DKV", "🎨", discord.ButtonStyle.primary))
+        self.add_item(RoleButton("Teknologi Informasi", "TEKINFO", "💻", discord.ButtonStyle.success))
+        self.add_item(RoleButton("Sistem Informasi", "SISFOR", "📊", discord.ButtonStyle.danger))
+        self.add_item(RoleButton("T. Telekomunikasi", "TEKTEL", "📡", discord.ButtonStyle.secondary))
 
-# Di Cogs, kita menggunakan Class
+class RoleButton(discord.ui.Button):
+    def __init__(self, label, role_name, emoji, color):
+        super().__init__(label=label, style=color, emoji=emoji)
+        self.role_name = role_name
+
+    async def callback(self, interaction: discord.Interaction):
+        # Mengambil referensi dari class View di atas
+        view: WelcomeRoleView = self.view
+        target_member = view.target_member
+        bot = view.bot
+
+        # 1. KUNCI EKSKLUSIF: Cek apakah yang ngeklik adalah orang yang di-tag
+        if interaction.user.id != target_member.id:
+            await interaction.response.send_message(f"⚠️ Eits, tombol ini khusus untuk {target_member.mention}! Tunggu giliran welcome-mu sendiri ya.", ephemeral=True)
+            return
+
+        # 2. PROSES PEMBERIAN ROLE
+        role = discord.utils.get(interaction.guild.roles, name=self.role_name)
+        if not role:
+            await interaction.response.send_message(f"Role **{self.role_name}** belum dibuat di server!", ephemeral=True)
+            return
+
+        await target_member.add_roles(role)
+
+        # 3. SIMPAN USERNAME KE DATABASE (Kunci Permanen)
+        # Menggunakan member.name (Username Global Discord sesuai permintaan)
+        try:
+            await bot.pool.execute(
+                "INSERT INTO maba_roles (username, role_name) VALUES ($1, $2)",
+                target_member.name, self.role_name
+            )
+        except Exception as e:
+            print(f"Database error saat menyimpan role maba: {e}")
+
+        # 4. HAPUS PESAN WELCOME & BERI KONFIRMASI
+        await interaction.message.delete()
+        await interaction.response.send_message(f"🎉 Mantap! Kamu resmi masuk program studi **{self.role_name}**. Silakan cek private room kelasmu di sebelah kiri!", ephemeral=True)
+
+
 class Welcome(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    async def cog_load(self):
+        # Membuat tabel database jika belum ada untuk menampung history role maba
+        await self.bot.pool.execute('''
+            CREATE TABLE IF NOT EXISTS maba_roles (
+                username TEXT PRIMARY KEY,
+                role_name TEXT
+            )
+        ''')
+
     @commands.Cog.listener()
     async def on_member_join(self, member):
-        channel = self.bot.get_channel(CHANNEL_ID)
-        if channel:
-            await channel.send(f'Selamat datang di server, **{member.display_name}**! 🎉 Semoga betah ya!')
+        # MASUKKAN ID ROOM 🎒・registrasi-maba DI SINI
+        WELCOME_CHANNEL_ID = 1526567698627035246
+        channel = self.bot.get_channel(WELCOME_CHANNEL_ID)
+        
+        if not channel:
+            return
 
-    @commands.Cog.listener()
-    async def on_member_remove(self, member):
-        channel = self.bot.get_channel(CHANNEL_ID)
-        if channel:
-            await channel.send(f'Selamat tinggal, **{member.display_name}**. Sampai jumpa lagi! 👋')
+        # 1. CEK DATABASE: Apakah username ini sudah pernah join dan milih role?
+        data = await self.bot.pool.fetchrow("SELECT role_name FROM maba_roles WHERE username = $1", member.name)
+        
+        if data:
+            # JIKA SUDAH PERNAH (Leave lalu Re-join)
+            old_role_name = data['role_name']
+            role = discord.utils.get(member.guild.roles, name=old_role_name)
+            
+            if role:
+                await member.add_roles(role)
+            
+            # Kirim pesan singkat tanpa tombol, lalu hilangkan dalam 15 detik
+            await channel.send(
+                f"👋 Welcome back {member.mention}! Data kamu sudah tersimpan sebagai **{old_role_name}**. Nggak perlu pilih role lagi, langsung masuk kelas aja!", 
+                delete_after=15
+            )
+            return
 
-# Syarat wajib agar file ini bisa terbaca oleh main.py
+        # 2. JIKA MABA BENAR-BENAR BARU
+        embed = discord.Embed(
+            title="🎓 Welcome to Telyu Jekardah!",
+            description=(
+                f"Helo welkam join Telyu Jekardah, {member.mention}!\n\n"
+                "Sebelum mulai berpetualang dan mabar, kamu **wajib** milih program studi dulu nih.\n\n"
+                "👉 **Silakan pilih satu role jurusan di bawah!**\n"
+                "*(Tombol ini dikunci khusus untukmu, dan pesan ini nggak akan hilang sampai kamu milih jurusan)*"
+            ),
+            color=discord.Color.blue()
+        )
+        embed.set_thumbnail(url=member.display_avatar.url)
+
+        # Panggil View yang sudah dikunci untuk member ini
+        view = WelcomeRoleView(target_member=member, bot=self.bot)
+        
+        # Kirim sapaan beserta tombolnya
+        await channel.send(content=f"Cek di mari ngab {member.mention}!", embed=embed, view=view)
+
+
 async def setup(bot):
     await bot.add_cog(Welcome(bot))
