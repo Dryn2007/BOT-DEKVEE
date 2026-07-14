@@ -56,8 +56,8 @@ class HelpView(discord.ui.View):
                 await self.message.delete()
             except discord.NotFound:
                 pass
-            except Exception as e:
-                print(f"Gagal menghapus pesan help: {e}")
+            except Exception:
+                pass
 
 
 class HelpMenu(commands.Cog):
@@ -66,10 +66,31 @@ class HelpMenu(commands.Cog):
         # Nonaktifkan command help bawaan Discord secara otomatis
         self.bot.remove_command('help')
 
+    # --- FITUR BARU: AUTO-DELETE PESAN SELAIN !HELP ---
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        # Abaikan pesan dari bot itu sendiri
+        if message.author.bot:
+            return
+
+        ROOM_HELP_ID = 1526500610726428802
+
+        # Cek apakah pesan dikirim di room khusus command-center
+        if message.channel.id == ROOM_HELP_ID:
+            # Jika isi pesannya BUKAN "!help" (mengabaikan huruf besar/kecil dan spasi tambahan)
+            if message.content.strip().lower() != "!help":
+                try:
+                    # Langsung hapus tanpa peringatan
+                    await message.delete()
+                except discord.Forbidden:
+                    pass # Abaikan jika bot tidak punya izin hapus pesan
+                except Exception:
+                    pass
+
     @commands.command()
     async def help(self, ctx):
-        # 1. Pastikan command ini HANYA bisa dipakai di room khusus
-        ROOM_HELP_ID = 1526498364932227092
+        # Pastikan command ini HANYA bisa dipakai di room khusus
+        ROOM_HELP_ID = 1526500610726428802
         
         # Hapus chat "!help" dari user agar room selalu bersih
         try:
@@ -77,11 +98,11 @@ class HelpMenu(commands.Cog):
         except discord.Forbidden:
             pass
 
-        # Jika user mengetik di room yang salah, bot tidak merespon sama sekali
+        # Jika user mengetik di room yang salah, bot tidak merespon
         if ctx.channel.id != ROOM_HELP_ID:
             return
 
-        # 2. Buat dan kirim embed awal beserta Dropdown Menu
+        # Buat dan kirim embed awal beserta Dropdown Menu
         embed = discord.Embed(
             title="🛠️ Pusat Bantuan DekVee",
             description="Pilih menu di bawah ini untuk melihat detail fitur dan cara menggunakannya!\n\n*(Pesan ini akan menghilang otomatis dalam 10 detik jika tidak digunakan)*",
