@@ -7,7 +7,7 @@ class Leveling(commands.Cog):
     def __init__(self, bot, pool):
         self.bot = bot
         self.pool = pool
-        self.cooldowns = {} # Penyimpanan waktu terakhir user chat
+        self.cooldowns = {}
 
     def get_rank_role(self, level):
         if level >= 100: return "Shadow Monarch"
@@ -17,18 +17,22 @@ class Leveling(commands.Cog):
         if level >= 20: return "B-Rank Hunter"
         if level >= 10: return "C-Rank Hunter"
         if level >= 5: return "D-Rank Hunter"
-        return "E-Rank Hunter"
+        return "E-Rank Hunter" # Default untuk level 1-4
+
+    def create_bar(self, xp, target):
+        # Membuat progress bar dengan 10 blok
+        percent = xp / target if target > 0 else 0
+        filled = int(percent * 10)
+        return f"[{'█' * filled}{'░' * (10 - filled)}]"
 
     async def update_role(self, member, level):
         role_name = self.get_rank_role(level)
         all_rank_roles = ["E-Rank Hunter", "D-Rank Hunter", "C-Rank Hunter", "B-Rank Hunter", 
                           "A-Rank Hunter", "S-Rank Hunter", "National Level Hunter", "Shadow Monarch"]
         
-        # Cari role di server
         target_role = discord.utils.get(member.guild.roles, name=role_name)
         if not target_role: return
 
-        # Hapus role lama dan tambah role baru
         roles_to_remove = [r for r in member.roles if r.name in all_rank_roles and r.name != role_name]
         if roles_to_remove:
             await member.remove_roles(*roles_to_remove)
@@ -37,27 +41,28 @@ class Leveling(commands.Cog):
             await member.add_roles(target_role)
 
     async def send_levelup_announcement(self, member, level):
-        # ID Room Pengumuman
         channel = self.bot.get_channel(1526479863811149954)
         if channel:
             embed = discord.Embed(
                 title="🏆 Level Up!",
-                description=f"Selamat {member.mention}! Kamu telah mencapai **Level {level}** dan menjadi seorang **{self.get_rank_role(level)}**!",
+                description=f"Selamat {member.mention}! Kamu naik ke **Level {level}** dan menjadi **{self.get_rank_role(level)}**!",
                 color=discord.Color.green()
             )
             embed.set_thumbnail(url=member.display_avatar.url)
             await channel.send(embed=embed)
 
     async def give_xp(self, user_id, amount, member=None):
-        # Memanggil fungsi SQL dari Supabase
         result = await self.pool.fetchrow("SELECT * FROM add_xp($1, $2)", user_id, amount)
         new_level = result['new_level']
         leveled_up = result['leveled_up']
         
-        if leveled_up and member:
+        if member:
+            # Selalu cek role setiap kali dapat XP agar user baru langsung dapat E-Rank
             await self.update_role(member, new_level)
-            await self.send_levelup_announcement(member, new_level)
-            await member.send(f"Selamat! Kamu naik ke level **{new_level}** ({self.get_rank_role(new_level)})!")
+            
+            if leveled_up:
+                await self.send_levelup_announcement(member, new_level)
+                await member.send(f"Selamat! Kamu naik ke level **{new_level}** ({self.get_rank_role(new_level)})!")
         
         return new_level
 
@@ -65,10 +70,8 @@ class Leveling(commands.Cog):
     async def on_message(self, message):
         if message.author.bot or not message.guild: return
         
-        # Cooldown 60 detik untuk chat XP
         last_time = self.cooldowns.get(message.author.id, datetime.min)
-        if datetime.now() - last_time < timedelta(seconds=60):
-            return
+        if datetime.now() - last_time < timedelta(seconds=60): return
         
         self.cooldowns[message.author.id] = datetime.now()
         await self.give_xp(message.author.id, 2, message.author)
@@ -77,24 +80,23 @@ class Leveling(commands.Cog):
     async def rank(self, ctx):
         data = await self.pool.fetchrow("SELECT * FROM levels WHERE user_id = $1", ctx.author.id)
         if not data:
-            msg = await ctx.send("Kamu belum punya data XP. Ayo aktif chat atau di VC!")
-            await asyncio.sleep(10)
-            await msg.delete()
-            return
+            # Jika user baru, coba kasih XP awal biar masuk database
+            await self.give_xp(ctx.author.id, 0, ctx.author)
+            data = {'xp': 0, 'level': 1}
         
-        xp = data['xp']
-        lvl = data['level']
+        xp, lvl = data['xp'], data['level']
         xp_needed = 50 * (lvl**2)
+        progress_bar = self.create_bar(xp, xp_needed)
         
         embed = discord.Embed(title=f"Rank Profil - {ctx.author.name}", color=discord.Color.gold())
-        embed.set_thumbnail(url=ctx.author.display_avatar.url) # Menampilkan foto profil user
+        embed.set_thumbnail(url=ctx.author.display_avatar.url)
         embed.add_field(name="Level", value=str(lvl), inline=True)
         embed.add_field(name="Rank", value=self.get_rank_role(lvl), inline=True)
-        embed.add_field(name="XP", value=f"{xp} / {xp_needed}", inline=False)
+        embed.add_field(name="XP Progress", value=f"{progress_bar}\n`{xp} / {xp_needed} XP`", inline=False)
         
         msg = await ctx.send(embed=embed)
-        await asyncio.sleep(10) # Tunggu 10 detik
-        await msg.delete()      # Hapus pesan otomatis
+        await asyncio.sleep(10)
+        await msg.delete()
 
     @commands.command()
     async def leaderboard(self, ctx):
@@ -107,5 +109,4 @@ class Leveling(commands.Cog):
         await ctx.send(msg)
 
 async def setup(bot):
-    # Langsung gunakan bot.pool yang sudah kita buat di main.py
     await bot.add_cog(Leveling(bot, bot.pool))
