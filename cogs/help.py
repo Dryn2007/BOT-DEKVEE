@@ -73,7 +73,7 @@ class HelpMenu(commands.Cog):
         if message.author.bot:
             return
 
-        ROOM_HELP_ID = 1526500610726428802
+        ROOM_HELP_ID = 1526498364932227092
 
         # Cek apakah pesan dikirim di room khusus command-center
         if message.channel.id == ROOM_HELP_ID:
