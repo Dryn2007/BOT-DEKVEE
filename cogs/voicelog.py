@@ -1,25 +1,25 @@
 import discord
 from discord.ext import commands
 from datetime import datetime
-import sqlite3
+import asyncpg
+import os
 
 class VoiceLog(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot, pool):
         self.bot = bot
+        self.pool = pool
         self.voice_sessions = {}
-        
-        # --- INISIALISASI DATABASE ---
-        self.conn = sqlite3.connect('voicelog.db')
-        self.cursor = self.conn.cursor()
-        self.cursor.execute('''
+
+    async def cog_load(self):
+        # Membuat tabel PostgreSQL jika belum ada saat bot menyala
+        await self.pool.execute('''
             CREATE TABLE IF NOT EXISTS history (
                 tanggal TEXT,
-                channel_id INTEGER,
-                user_id INTEGER,
+                channel_id BIGINT,
+                user_id BIGINT,
                 durasi REAL
             )
         ''')
-        self.conn.commit()
 
     def get_today_date(self):
         return datetime.now().strftime('%Y-%m-%d')
@@ -29,16 +29,18 @@ class VoiceLog(commands.Cog):
         if member.bot:
             return
 
-        # JIKA USER KELUAR VC (Simpan ke Database)
+        # JIKA USER KELUAR VC (Simpan ke Database Supabase)
         if before.channel is not None and before.channel != after.channel:
             if member.id in self.voice_sessions:
                 session = self.voice_sessions.pop(member.id)
                 durasi_sesi = (datetime.now() - session["start_time"]).total_seconds()
                 tanggal_hari_ini = self.get_today_date()
                 
-                self.cursor.execute("INSERT INTO history VALUES (?, ?, ?, ?)", 
-                                  (tanggal_hari_ini, session["channel_id"], member.id, durasi_sesi))
-                self.conn.commit()
+                # Menggunakan $1, $2 dst untuk PostgreSQL
+                await self.pool.execute(
+                    "INSERT INTO history (tanggal, channel_id, user_id, durasi) VALUES ($1, $2, $3, $4)", 
+                    tanggal_hari_ini, session["channel_id"], member.id, durasi_sesi
+                )
 
         # JIKA USER MASUK VC
         if after.channel is not None and before.channel != after.channel:
@@ -50,7 +52,6 @@ class VoiceLog(commands.Cog):
     def build_embed(self, judul, data_durasi, real_time_sessions=None):
         embed = discord.Embed(title=judul, color=discord.Color.blue())
         
-        # Tambahkan data real-time jika ada
         if real_time_sessions:
             for uid, session in real_time_sessions.items():
                 ongoing_duration = (datetime.now() - session["start_time"]).total_seconds()
@@ -93,14 +94,10 @@ class VoiceLog(commands.Cog):
     async def vclog(self, ctx, arg=None):
         tanggal_hari_ini = self.get_today_date()
 
-        # 1. LOGIKA UNTUK HISTORY
         if arg and arg.lower() == "history":
-            # Hapus pengecualian hari ini. Ambil SEMUA tanggal yang ada.
-            self.cursor.execute("SELECT DISTINCT tanggal FROM history ORDER BY tanggal DESC LIMIT 25")
-            tanggal_tersedia = [row[0] for row in self.cursor.fetchall()]
+            records = await self.pool.fetch("SELECT DISTINCT tanggal FROM history ORDER BY tanggal DESC LIMIT 25")
+            tanggal_tersedia = [row['tanggal'] for row in records]
 
-            # Paksa masukkan tanggal hari ini jika ada orang yg sedang aktif di VC
-            # (meskipun mereka belum keluar dan datanya belum masuk database)
             if tanggal_hari_ini not in tanggal_tersedia and self.voice_sessions:
                 tanggal_tersedia.insert(0, tanggal_hari_ini)
 
@@ -111,13 +108,12 @@ class VoiceLog(commands.Cog):
             view = HistoryView(self, tanggal_tersedia)
             await ctx.send("Pilih tanggal history yang ingin kamu lihat:", view=view)
 
-        # 2. LOGIKA UNTUK CEK HARI INI SAJA
         else:
-            self.cursor.execute("SELECT channel_id, user_id, SUM(durasi) FROM history WHERE tanggal = ? GROUP BY channel_id, user_id", (tanggal_hari_ini,))
-            rows = self.cursor.fetchall()
+            records = await self.pool.fetch("SELECT channel_id, user_id, SUM(durasi) as total_durasi FROM history WHERE tanggal = $1 GROUP BY channel_id, user_id", tanggal_hari_ini)
             
             data_hari_ini = {}
-            for cid, uid, dur in rows:
+            for row in records:
+                cid, uid, dur = row['channel_id'], row['user_id'], row['total_durasi']
                 if cid not in data_hari_ini: data_hari_ini[cid] = {}
                 data_hari_ini[cid][uid] = dur
 
@@ -134,26 +130,31 @@ class HistoryDropdown(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         tanggal_dipilih = self.values[0]
         
-        self.cog_instance.cursor.execute("SELECT channel_id, user_id, SUM(durasi) FROM history WHERE tanggal = ? GROUP BY channel_id, user_id", (tanggal_dipilih,))
-        rows = self.cog_instance.cursor.fetchall()
+        records = await self.cog_instance.pool.fetch("SELECT channel_id, user_id, SUM(durasi) as total_durasi FROM history WHERE tanggal = $1 GROUP BY channel_id, user_id", tanggal_dipilih)
         
         data_history = {}
-        for cid, uid, dur in rows:
+        for row in records:
+            cid, uid, dur = row['channel_id'], row['user_id'], row['total_durasi']
             if cid not in data_history: data_history[cid] = {}
             data_history[cid][uid] = dur
 
-        # CEK PENTING: Jika tanggal yang diklik adalah HARI INI, gabungkan dengan durasi Real-Time!
         sesi_realtime = self.cog_instance.voice_sessions if tanggal_dipilih == self.cog_instance.get_today_date() else None
 
         embed = self.cog_instance.build_embed(f"📜 History VC: {tanggal_dipilih}", data_history, sesi_realtime)
-        await interaction.response.edit_message(content=f"Menampilkan data untuk **{tanggal_dipilih}**:", embed=embed)
-
+        await interaction.response.edit_message(content=f"Menampilkan data untuk **{tanggal_dipilih}**:", embed=embed, view=None)
 
 class HistoryView(discord.ui.View):
     def __init__(self, cog_instance, tanggal_list):
         super().__init__(timeout=120) 
         self.add_item(HistoryDropdown(cog_instance, tanggal_list))
 
-
 async def setup(bot):
-    await bot.add_cog(VoiceLog(bot))
+    # Mengambil URL Database dari Config Vars Heroku (atau .env lokal)
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        print("⚠️ DATABASE_URL TIDAK DITEMUKAN! Cog VoiceLog gagal diload.")
+        return
+
+    # Menghubungkan bot ke Supabase
+    pool = await asyncpg.create_pool(db_url)
+    await bot.add_cog(VoiceLog(bot, pool))
