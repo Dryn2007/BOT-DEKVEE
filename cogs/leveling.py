@@ -45,7 +45,7 @@ class Leveling(commands.Cog):
             embed = discord.Embed(
                 title="🏆 Level Up!",
                 description=f"Selamat {member.mention}! Kamu naik ke **Level {level}** dan menjadi **{self.get_rank_role(level)}**!",
-                color=discord.Color.green()
+                color=discord.Color.gold() # Ubah jadi warna gold biar premium
             )
             embed.set_thumbnail(url=member.display_avatar.url)
             await channel.send(embed=embed)
@@ -77,8 +77,34 @@ class Leveling(commands.Cog):
         self.cooldowns[message.author.id] = datetime.now()
         await self.give_xp(message.author.id, 2, message.author)
 
+    # --- COMMAND BARU UNTUK TESTING ---
+    @commands.command()
+    @commands.has_permissions(administrator=True) # Dibatasi hanya untuk Admin
+    async def testxp(self, ctx, amount: int):
+        """Fitur untuk ngetest naik level secara instan (Admin Only)"""
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        
+        # Tambahkan XP sesuai input
+        new_level = await self.give_xp(ctx.author.id, amount, ctx.author)
+        
+        msg = await ctx.send(f"🔧 **Test Mode:** Berhasil menyuntikkan `{amount} XP` ke {ctx.author.mention}! (Sekarang Level: **{new_level}**)")
+        await asyncio.sleep(5)
+        await msg.delete()
+    # ----------------------------------
+
     @commands.command()
     async def rank(self, ctx):
+        # 1. Menghapus pesan command !rank dari chat
+        try:
+            await ctx.message.delete()
+        except discord.Forbidden:
+            pass # Lewati jika bot tidak punya akses hapus pesan
+        except Exception:
+            pass
+
         # Ambil data XP dari database
         data = await self.pool.fetchrow("SELECT * FROM levels WHERE user_id = $1", ctx.author.id)
         if not data:
@@ -98,42 +124,45 @@ class Leveling(commands.Cog):
         
         # --- MEMBUAT GAMBAR RANK CARD (EASY-PIL) ---
         
-        # 1. Buat background dasar (warna gelap agar terlihat premium)
+        # Background dasar (Gelap metalik)
         background = Editor(Canvas((900, 300), color="#1A1C1E"))
         
-        # 2. Tarik avatar user dari discord
+        # Tarik avatar user dari discord
         avatar_url = ctx.author.display_avatar.with_format("png").url
         profile = await load_image_async(str(avatar_url))
-        profile = Editor(profile).resize((200, 200)).circle_image() # Bikin avatar jadi bulat
+        profile = Editor(profile).resize((200, 200)).circle_image()
         
-        # 3. Tempel avatar ke background
+        # Tempel avatar
         background.paste(profile, (50, 50))
         
-        # 4. Siapkan Font bawaan
+        # Font premium
         poppins_large = Font.poppins(size=50, variant="bold")
-        poppins_medium = Font.poppins(size=35)
+        poppins_medium = Font.poppins(size=35, variant="bold")
         poppins_small = Font.poppins(size=25)
         
-        # 5. Tulis Nama User dan Role Hunter
+        # Tulis Nama User dan Role Hunter (Warna Emas)
         role_name = self.get_rank_role(lvl)
         background.text((280, 80), str(ctx.author.name), font=poppins_large, color="white")
-        background.text((280, 140), role_name, font=poppins_medium, color="#FFD700") # Warna Gold
+        background.text((280, 140), f"🗡️ {role_name}", font=poppins_medium, color="#FFD700") 
         
-        # 6. Tulis Status Level dan XP (Rata Kanan)
+        # Tulis Status Level dan XP (Warna Abu Metalik)
         background.text((850, 80), f"Level {lvl}", font=poppins_large, color="white", align="right")
-        background.text((850, 140), f"{xp} / {xp_needed} XP", font=poppins_small, color="#A2A2A2", align="right")
+        background.text((850, 140), f"{xp} / {xp_needed} XP", font=poppins_small, color="#C0C0C0", align="right")
         
-        # 7. Gambar Progress Bar Premium (Outline & Fill)
-        # Background bar (kosong)
-        background.rectangle((280, 200), width=570, height=45, color="#2F3136", radius=20)
-        # Bar yang terisi sesuai XP
-        background.bar((280, 200), max_width=570, height=45, percentage=percentage, color="#FFD700", radius=20)
+        # Gambar Progress Bar Premium
+        # Background bar (kosong) dengan bingkai tebal
+        background.rectangle((280, 200), width=570, height=50, color="#2F3136", radius=25)
+        # Bar yang terisi (Emas gelap)
+        background.bar((280, 200), max_width=570, height=50, percentage=percentage, color="#DAA520", radius=25)
         
-        # Ubah objek jadi file discord dan kirim
+        # Teks persentase di tengah bar
+        background.text((280 + (570/2), 225), f"{percentage:.1f}% Complete", font=Font.poppins(size=18, variant="bold"), color="#1A1C1E", align="center")
+        
+        # Kirim hasil akhir gambar
         file = discord.File(fp=background.image_bytes, filename="rank.png")
         msg = await ctx.send(file=file)
         
-        # (Opsional) Hapus setelah 20 detik untuk menghemat ruang chat
+        # (Opsional) Gambar rank card ini akan dihapus setelah 20 detik agar chat tidak penuh
         await asyncio.sleep(20)
         await msg.delete()
 
