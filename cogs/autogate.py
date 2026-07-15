@@ -70,8 +70,8 @@ class AutoGate(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         # MASUKKAN ID ROOM MASING-MASING DI SINI
-        self.pos_satpam_id = 111111111111111111  # Ganti dengan ID room 🛑・pos-satpam
-        self.welcome_center_id = 222222222222222222 # Ganti dengan ID room 🎒・welcome-center
+        self.pos_satpam_id = 1526900951678587013  # Ganti dengan ID room 🛑・pos-satpam
+        self.welcome_center_id = 1526567698627035246 # Ganti dengan ID room 🎒・welcome-center
 
     async def panggil_gemini_api(self, prompt, image_data, mime_type):
         """Fungsi rahasia untuk mem-bypass library Google dan tembak API langsung"""
