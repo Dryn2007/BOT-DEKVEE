@@ -15,7 +15,6 @@ class AutoGate(commands.Cog):
         self.bot = bot
         # MASUKKAN ID ROOM POS SATPAM DI SINI
         self.pos_satpam_id = 1526900951678587013
-        # ID welcome-center sudah dihapus karena tidak dipakai lagi
 
     async def panggil_gemini_api(self, prompt, image_data, mime_type):
         if not gemini_key:
@@ -80,6 +79,23 @@ class AutoGate(commands.Cog):
             if any(attachment.filename.lower().endswith(ext) for ext in ['png', 'jpg', 'jpeg']):
                 
                 # ========================================================
+                # FITUR BARU: CEGAT ORANG YANG SUDAH LOLOS
+                # ========================================================
+                role_member = discord.utils.get(message.guild.roles, name="MEMBER")
+                if role_member and role_member in message.author.roles:
+                    # Langsung hapus fotonya
+                    try: await message.delete()
+                    except: pass
+                    
+                    # Kasih tau kalau dia udah lolos
+                    peringatan = await message.channel.send(
+                        f"Eits {message.author.mention}, kamu kan udah lolos verifikasi! Nggak perlu upload SKL lagi ya. 😅"
+                    )
+                    await peringatan.delete(delay=10)
+                    return # Hentikan proses bot sampai di sini
+                # ========================================================
+
+                # ========================================================
                 # 1. HAPUS PESAN "HALT!" SAAT USER UPLOAD FOTO
                 # ========================================================
                 async for msg in message.channel.history(limit=20):
@@ -109,16 +125,35 @@ class AutoGate(commands.Cog):
 
                     nama_depan = message.author.display_name.split()[0]
                     
-                    # AI hanya menyalin teks saja
-                    prompt = "Salin dan ketik ulang seluruh teks yang bisa kamu baca di gambar ini. Jangan berikan penjelasan."
+                    # ========================================================
+                    # PROMPT BARU: AI disuruh mendeteksi keaslian visual dokumen
+                    # ========================================================
+                    prompt = (
+                        "Perhatikan gambar ini baik-baik.\n"
+                        "1. Jika gambar ini secara visual BUKAN potongan surat resmi, atau hanya berupa teks/ketikan biasa di layar polos, balas HANYA dengan kata 'PALSU'.\n"
+                        "2. Jika gambar ini terlihat seperti dokumen, surat, atau pengumuman kampus asli, salin dan ketik ulang seluruh teksnya tanpa penjelasan apapun."
+                    )
+                    
                     hasil_mentah = await self.panggil_gemini_api(prompt, image_data, attachment.content_type)
                     
+                    # ========================================================
+                    # PENANGANAN HASIL AI
+                    # ========================================================
                     if "KODE_BLOKIR_SENSOR" in hasil_mentah:
                         tolak_msg = await message.channel.send(
                             f"❌ **Waduh {nama_depan}, sistem Google menolak membaca dokumenmu!** {message.author.mention}\n"
                             "👉 **SOLUSI:** Sensor bagian Nama Lengkap, Nomor Pendaftaran, dan Foto Wajah. Jika masih gagal, crop gambar agar fokus ke teks Kampus, Tahun, dan Prodi saja."
                         )
                         await tolak_msg.delete(delay=30)
+                        
+                    # PENANGANAN JIKA GAMBAR TERDETEKSI PALSU (ANTI-BYPASS)
+                    elif "PALSU" in hasil_mentah.upper():
+                        tolak_msg = await message.channel.send(
+                            f"🚨 **Waduh {nama_depan}, ketahuan nih!** {message.author.mention}\n"
+                            "Sistem AI mendeteksi gambar yang kamu kirim bukan dokumen/surat resmi. Tolong upload foto SKL yang asli ya!"
+                        )
+                        await tolak_msg.delete(delay=15)
+                        
                     else:
                         # Logika Python (Bukan AI) yang menentukan Lolos & Jurusannya
                         teks = hasil_mentah.lower()
