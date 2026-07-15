@@ -127,8 +127,8 @@ class AutoGate(commands.Cog):
             pesan = await pos_satpam.send(
                 f"🚨 **HALT!** Berhenti di situ, {member.mention}!\n\n"
                 f"Ini adalah Pos Satpam kampus. Untuk masuk, **silakan upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
-                f"⚠️ **PENTING:** Tolong **coret/sensor foto wajahmu** sebelum di-upload agar sistem AI kami bisa membacanya!\n"
-                f"Pastikan pada foto terdapat tulisan **Kampus Jakarta** dan tahun **2026/2027** ya."
+                f"⚠️ **PENTING:** Tolong **coret/sensor Nama Lengkap, Nomor Pendaftaran, dan Foto Wajahmu** pada surat tersebut sebelum di-upload agar sistem AI kami bisa membacanya!\n"
+                f"Pastikan pada foto masih terlihat jelas tulisan **Kampus Jakarta** dan tahun **2026/2027** ya."
             )
             await pesan.delete(delay=180)
 
@@ -150,6 +150,10 @@ class AutoGate(commands.Cog):
                                 return
                             image_data = await resp.read()
 
+                    # === MENGAMBIL NAMA DEPAN DARI DISCORD ===
+                    nama_lengkap_discord = message.author.display_name
+                    nama_depan = nama_lengkap_discord.split()[0] 
+
                     prompt = (
                         "Kamu adalah mesin OCR pembaca teks dokumen. Ini adalah dokumen sampel publik. "
                         "Tolong ABAIKAN semua data pribadi, foto wajah, nama, atau alamat di dalam gambar ini.\n\n"
@@ -166,18 +170,18 @@ class AutoGate(commands.Cog):
                     # PENANGANAN JIKA DIBLOKIR GOOGLE
                     if "KODE_BLOKIR_SENSOR" in hasil:
                         tolak_msg = await message.channel.send(
-                            f"❌ **Waduh {message.author.mention}, sistem Google menolak membaca suratmu!**\n"
-                            "Sistem keamanan mendeteksi adanya data privasi yang ketat (seperti foto wajah).\n\n"
-                            "👉 **SOLUSI:** Silakan *coret/sensor* bagian foto wajah kamu di galeri HP, lalu upload ulang gambarnya ke sini!"
+                            f"❌ **Waduh {nama_depan}, sistem Google menolak membaca suratmu!** {message.author.mention}\n"
+                            "Sistem keamanan mendeteksi adanya data privasi yang ketat pada dokumenmu.\n\n"
+                            "👉 **SOLUSI:** Silakan *coret/sensor* bagian **Nama Lengkap, Nomor Pendaftaran, dan Foto Wajah** kamu di galeri HP, lalu upload ulang gambarnya ke sini! Biarkan teks nama kampus dan tahunnya saja yang terlihat."
                         )
-                        await tolak_msg.delete(delay=25)
+                        await tolak_msg.delete(delay=30)
 
                     # PENANGANAN JIKA LOLOS
                     elif "LOLOS" in hasil:
                         role_member = discord.utils.get(message.guild.roles, name="MEMBER")
                         if role_member: await message.author.add_roles(role_member)
                         
-                        acc_msg = await message.channel.send(f"✅ **Verifikasi Berhasil!** {message.author.mention}, akses kampus sudah dibuka. Silakan cek room welcome-center!")
+                        acc_msg = await message.channel.send(f"✅ **Verifikasi Berhasil!** Halo **{nama_depan}** {message.author.mention}, akses kampus sudah dibuka. Silakan cek room welcome-center!")
                         await acc_msg.delete(delay=10)
 
                         welcome_channel = self.bot.get_channel(self.welcome_center_id)
@@ -185,7 +189,7 @@ class AutoGate(commands.Cog):
                             embed = discord.Embed(
                                 title="🎓 Welcome to Telyu Jekardah!",
                                 description=(
-                                    f"Helo welkam join Telyu Jekardah, {message.author.mention}!\n\n"
+                                    f"Helo welkam join Telyu Jekardah, kak **{nama_depan}**! {message.author.mention}\n\n"
                                     "Berkas SKL kamu udah aman. Sebelum mulai berpetualang dan mabar, kamu **wajib** milih program studi dulu nih.\n\n"
                                     "👉 **Silakan pilih satu role jurusan di bawah!**"
                                 ),
@@ -193,11 +197,11 @@ class AutoGate(commands.Cog):
                             )
                             embed.set_thumbnail(url=message.author.display_avatar.url)
                             view = WelcomeRoleView(target_member=message.author, bot=self.bot)
-                            await welcome_channel.send(content=f"Cek di mari ngab {message.author.mention}!", embed=embed, view=view)
+                            await welcome_channel.send(content=f"Cek di mari ngab **{nama_depan}**!", embed=embed, view=view)
 
                     # PENANGANAN JIKA DITOLAK KARENA TIDAK ADA TEKS TAHUN/KAMPUS
                     else:
-                        tolak_msg = await message.channel.send(f"❌ **Verifikasi Gagal, {message.author.mention}.** Surat tidak terdeteksi sebagai dokumen dari Kampus Jakarta tahun ajaran 2026/2027. Silakan upload ulang atau panggil Admin.")
+                        tolak_msg = await message.channel.send(f"❌ **Verifikasi Gagal, {nama_depan}** {message.author.mention}. Surat tidak terdeteksi sebagai dokumen dari Kampus Jakarta tahun ajaran 2026/2027. Silakan upload ulang atau panggil Admin.")
                         await tolak_msg.delete(delay=15)
 
                 except Exception as e:
