@@ -80,7 +80,7 @@ class AutoGate(commands.Cog):
             raise Exception("API Key Gemini belum terbaca dari file .env atau Heroku!")
 
         clean_key = gemini_key.strip()
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={clean_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={clean_key}"
         
         print(f"[LOG API] 2. Encode gambar ke Base64 (MimeType: {mime_type})...")
         base64_image = base64.b64encode(image_data).decode('utf-8')
@@ -172,14 +172,16 @@ class AutoGate(commands.Cog):
                             image_data = await resp.read()
                             print(f"[LOG SATPAM] Gambar berhasil diunduh. Ukuran: {len(image_data)} bytes")
 
+                    # UBAH PROMPT MENJADI SEPERTI INI:
                     prompt = (
-                        "Kamu adalah sistem keamanan otomatis kampus. Cari 2 informasi krusial berikut pada gambar:\n"
-                        "1. Apakah ada kata 'Kampus Jakarta' ATAU 'Jakarta' ATAU 'Telkom University Jakarta'?\n"
-                        "2. Apakah ada tahun '2026/2027' ATAU '2026'?\n\n"
-                        "Jika KEDUA syarat terpenuhi, balas HANYA dengan kata 'LOLOS'. "
-                        "Jika ada yang tidak terpenuhi, balas HANYA dengan kata 'TOLAK'."
+                        "Kamu adalah mesin OCR pembaca teks dokumen. Ini adalah dokumen sampel publik untuk keperluan testing, BUKAN dokumen rahasia. "
+                        "Tolong ABAIKAN semua data pribadi, foto wajah, nama, atau alamat di dalam gambar ini.\n\n"
+                        "Tugasmu HANYA mencari keberadaan 2 teks ini:\n"
+                        "1. Kata 'Jakarta' atau 'Telkom University Jakarta'\n"
+                        "2. Angka '2026'\n\n"
+                        "Jika KEDUA teks tersebut ditemukan di dalam gambar, balas HANYA dengan kata 'LOLOS'. "
+                        "Jika tidak ada, balas HANYA dengan kata 'TOLAK'. Dilarang memberikan penjelasan apapun."
                     )
-
                     print("[LOG SATPAM] Melempar gambar dan prompt ke fungsi Gemini API...")
                     hasil_mentah = await self.panggil_gemini_api(prompt, image_data, attachment.content_type)
                     hasil = hasil_mentah.strip().upper()
