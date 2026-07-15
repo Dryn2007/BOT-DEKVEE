@@ -49,7 +49,7 @@ class VoiceLog(commands.Cog):
         if member.bot:
             return
 
-        # JIKA USER KELUAR VC
+        # JIKA USER KELUAR VC ATAU PINDAH VC
         if before.channel is not None and before.channel != after.channel:
             if member.id in self.voice_sessions:
                 session = self.voice_sessions.pop(member.id)
@@ -69,7 +69,7 @@ class VoiceLog(commands.Cog):
                     tanggal_hari_ini, session["channel_id"], member.id, durasi_sesi
                 )
 
-        # JIKA USER MASUK VC
+        # JIKA USER MASUK VC ATAU PINDAH VC
         if after.channel is not None and before.channel != after.channel:
             self.voice_sessions[member.id] = {
                 "start_time": datetime.now(),
@@ -82,7 +82,8 @@ class VoiceLog(commands.Cog):
             for uid, session in real_time_sessions.items():
                 ongoing_duration = (datetime.now() - session["start_time"]).total_seconds()
                 chan_id = session["channel_id"]
-                if chan_id not in data_durasi: data_durasi[chan_id] = {}
+                if chan_id not in data_durasi:
+                    data_durasi[chan_id] = {}
                 data_durasi[chan_id][uid] = data_durasi[chan_id].get(uid, 0) + ongoing_duration
 
         if not data_durasi:
@@ -108,8 +109,6 @@ class VoiceLog(commands.Cog):
         # 1. Hapus pesan/chat perintah dari user secara instan
         try:
             await ctx.message.delete()
-        except discord.Forbidden:
-            pass 
         except Exception:
             pass
 
@@ -124,8 +123,10 @@ class VoiceLog(commands.Cog):
             if not tanggal_tersedia:
                 msg = await ctx.send("Belum ada data history yang tersimpan.")
                 await asyncio.sleep(10)
-                try: await msg.delete() 
-                except: pass
+                try: 
+                    await msg.delete() 
+                except: 
+                    pass
                 return
             
             view = HistoryView(self, tanggal_tersedia)
@@ -136,9 +137,12 @@ class VoiceLog(commands.Cog):
             
         else:
             records = await self.pool.fetch("SELECT channel_id, user_id, SUM(durasi) as total_durasi FROM history WHERE tanggal = $1 GROUP BY channel_id, user_id", tanggal_hari_ini)
-            data_hari_ini = {row['channel_id']: {row['user_id']: row['total_durasi']} for row in records}
+            
+            # [PERBAIKAN] Logika dictionary dibuat murni menggunakan perulangan agar aman
+            data_hari_ini = {}
             for row in records:
-                if row['channel_id'] not in data_hari_ini: data_hari_ini[row['channel_id']] = {}
+                if row['channel_id'] not in data_hari_ini: 
+                    data_hari_ini[row['channel_id']] = {}
                 data_hari_ini[row['channel_id']][row['user_id']] = row['total_durasi']
             
             embed = self.build_embed(f"📊 Statistik VC: Hari Ini ({tanggal_hari_ini})", data_hari_ini, self.voice_sessions)
@@ -161,9 +165,11 @@ class HistoryDropdown(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         tanggal_dipilih = self.values[0]
         records = await self.cog_instance.pool.fetch("SELECT channel_id, user_id, SUM(durasi) as total_durasi FROM history WHERE tanggal = $1 GROUP BY channel_id, user_id", tanggal_dipilih)
+        
         data_history = {}
         for row in records:
-            if row['channel_id'] not in data_history: data_history[row['channel_id']] = {}
+            if row['channel_id'] not in data_history: 
+                data_history[row['channel_id']] = {}
             data_history[row['channel_id']][row['user_id']] = row['total_durasi']
         
         sesi_realtime = self.cog_instance.voice_sessions if tanggal_dipilih == self.cog_instance.get_today_date() else None
