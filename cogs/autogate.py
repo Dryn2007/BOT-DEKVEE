@@ -85,13 +85,32 @@ class AutoGate(commands.Cog):
         print(f"[LOG API] 2. Encode gambar ke Base64 (MimeType: {mime_type})...")
         base64_image = base64.b64encode(image_data).decode('utf-8')
         
+        # Tambahkan safetySettings untuk mematikan sensor overprotective Google
         payload = {
             "contents": [{
                 "parts": [
                     {"text": prompt},
                     {"inlineData": {"mimeType": mime_type, "data": base64_image}}
                 ]
-            }]
+            }],
+            "safetySettings": [
+                {
+                    "category": "HARM_CATEGORY_HARASSMENT",
+                    "threshold": "BLOCK_NONE"
+                },
+                {
+                    "category": "HARM_CATEGORY_HATE_SPEECH",
+                    "threshold": "BLOCK_NONE"
+                },
+                {
+                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                    "threshold": "BLOCK_NONE"
+                },
+                {
+                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                    "threshold": "BLOCK_NONE"
+                }
+            ]
         }
         
         print("[LOG API] 3. Mengirim request ke server Google...")
