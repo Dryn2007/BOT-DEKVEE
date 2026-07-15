@@ -61,7 +61,7 @@ class AutoGate(commands.Cog):
         if member.bot: return
         pos_satpam = self.bot.get_channel(self.pos_satpam_id)
         if pos_satpam:
-            # Peringatan diubah agar maba tidak menutupi teks prodinya
+            # PERBAIKAN 1: Pesan sapaan ini akan menetap permanen sampai user upload foto
             await pos_satpam.send(
                 f"🚨 **HALT!** Berhenti di situ, {member.mention}!\n\n"
                 f"Untuk masuk, **upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
@@ -78,28 +78,24 @@ class AutoGate(commands.Cog):
             attachment = message.attachments[0]
             if any(attachment.filename.lower().endswith(ext) for ext in ['png', 'jpg', 'jpeg']):
                 
-                # ========================================================
-                # FITUR BARU: CEGAT ORANG YANG SUDAH LOLOS
-                # ========================================================
+                # CEGAT ORANG YANG SUDAH LOLOS
                 role_member = discord.utils.get(message.guild.roles, name="MEMBER")
                 if role_member and role_member in message.author.roles:
-                    # Langsung hapus fotonya
                     try: await message.delete()
                     except: pass
                     
-                    # Kasih tau kalau dia udah lolos
                     peringatan = await message.channel.send(
                         f"Eits {message.author.mention}, kamu kan udah lolos verifikasi! Nggak perlu upload SKL lagi ya. 😅"
                     )
                     await peringatan.delete(delay=10)
-                    return # Hentikan proses bot sampai di sini
-                # ========================================================
+                    return 
 
                 # ========================================================
-                # 1. HAPUS PESAN "HALT!" SAAT USER UPLOAD FOTO
+                # PENYAPU OTOMATIS: Menghapus "HALT!" dan Peringatan Gagal sebelumnya
                 # ========================================================
-                async for msg in message.channel.history(limit=20):
-                    # Cari pesan dari bot yang me-mention maba tersebut
+                # Kapasitas sapuan dinaikkan ke 50 pesan terakhir agar bersih maksimal
+                async for msg in message.channel.history(limit=50):
+                    # Jika pesan itu dari bot DAN menyebut (mention) maba tersebut, hapus!
                     if msg.author == self.bot.user and message.author.mention in msg.content:
                         try:
                             await msg.delete()
@@ -114,20 +110,15 @@ class AutoGate(commands.Cog):
                             if resp.status != 200: return
                             image_data = await resp.read()
 
-                    # ========================================================
-                    # 2. HAPUS FOTO SECARA INSTAN SETELAH DI-DOWNLOAD BOT
-                    # ========================================================
+                    # HAPUS FOTO SECARA INSTAN SETELAH DI-DOWNLOAD BOT
                     try:
                         await message.delete()
                     except:
                         pass
-                    # ========================================================
 
                     nama_depan = message.author.display_name.split()[0]
                     
-                    # ========================================================
                     # PROMPT BARU: AI disuruh mendeteksi keaslian visual dokumen
-                    # ========================================================
                     prompt = (
                         "Perhatikan gambar ini baik-baik.\n"
                         "1. Jika gambar ini secara visual BUKAN potongan surat resmi, atau hanya berupa teks/ketikan biasa di layar polos, balas HANYA dengan kata 'PALSU'.\n"
@@ -137,22 +128,20 @@ class AutoGate(commands.Cog):
                     hasil_mentah = await self.panggil_gemini_api(prompt, image_data, attachment.content_type)
                     
                     # ========================================================
-                    # PENANGANAN HASIL AI
+                    # PERBAIKAN 2: Pesan peringatan (tolak_msg) tidak dihapus otomatis.
+                    # Akan terhapus saat maba tersebut mengunggah foto baru (tersapu).
                     # ========================================================
                     if "KODE_BLOKIR_SENSOR" in hasil_mentah:
-                        tolak_msg = await message.channel.send(
+                        await message.channel.send(
                             f"❌ **Waduh {nama_depan}, sistem Google menolak membaca dokumenmu!** {message.author.mention}\n"
                             "👉 **SOLUSI:** Sensor bagian Nama Lengkap, Nomor Pendaftaran, dan Foto Wajah. Jika masih gagal, crop gambar agar fokus ke teks Kampus, Tahun, dan Prodi saja."
                         )
-                        await tolak_msg.delete(delay=30)
                         
-                    # PENANGANAN JIKA GAMBAR TERDETEKSI PALSU (ANTI-BYPASS)
                     elif "PALSU" in hasil_mentah.upper():
-                        tolak_msg = await message.channel.send(
+                        await message.channel.send(
                             f"🚨 **Waduh {nama_depan}, ketahuan nih!** {message.author.mention}\n"
                             "Sistem AI mendeteksi gambar yang kamu kirim bukan dokumen/surat resmi. Tolong upload foto SKL yang asli ya!"
                         )
-                        await tolak_msg.delete(delay=15)
                         
                     else:
                         # Logika Python (Bukan AI) yang menentukan Lolos & Jurusannya
@@ -193,21 +182,22 @@ class AutoGate(commands.Cog):
                             except Exception as e:
                                 print(f"[DB ERROR] Gagal input ke database: {e}")
 
-                            # Sapaan sukses
+                            # PERBAIKAN 3: Pesan sukses hilang dalam 10 detik
                             acc_msg = await message.channel.send(
                                 f"✅ **Verifikasi Berhasil!** Halo **{nama_depan}** {message.author.mention}, kamu resmi masuk program studi **{prodi_terdeteksi}**! Silakan cek private room kelasmu di sebelah kiri!"
                             )
-                            await acc_msg.delete(delay=25)
+                            await acc_msg.delete(delay=10)
                         else:
-                            tolak_msg = await message.channel.send(
+                            # Ini juga termasuk peringatan gagal, tidak akan terhapus sampai upload ulang
+                            await message.channel.send(
                                 f"❌ **Gagal {nama_depan}** {message.author.mention}. Pastikan nama kampus, tahun 2026/2027, dan **Nama Program Studi** terbaca jelas di fotomu!"
                             )
-                            await tolak_msg.delete(delay=15)
                             
                 except Exception as e:
-                    await message.channel.send(f"⚠️ Waduh, sistem pusing: {e}")
+                    # Tambahan mention agar pesan error teknis juga bisa tersapu nanti
+                    await message.channel.send(f"⚠️ Waduh, sistem pusing {message.author.mention}: {e}")
                 finally:
-                    # Fallback pengaman: coba hapus lagi kalau sebelumnya gagal
+                    # Fallback pengaman
                     try: await message.delete()
                     except: pass
 
