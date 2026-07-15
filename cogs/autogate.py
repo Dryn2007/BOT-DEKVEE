@@ -54,7 +54,7 @@ class RoleButton(discord.ui.Button):
                 target_member.name, self.role_name
             )
         except Exception as e:
-            print(f"Database error: {e}")
+            print(f"[DB ERROR] Gagal input ke database: {e}")
 
         await interaction.followup.send(f"🎉 Mantap! Kamu resmi masuk program studi **{self.role_name}**. Silakan cek private room kelasmu di sebelah kiri!", ephemeral=True)
         
@@ -64,28 +64,27 @@ class RoleButton(discord.ui.Button):
             pass
 
 # ==========================================
-# 2. SISTEM AUTO-GATE (DIRECT API BYPASS)
+# 2. SISTEM AUTO-GATE (DIRECT API BYPASS DENGAN LOGGING)
 # ==========================================
 class AutoGate(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         # MASUKKAN ID ROOM MASING-MASING DI SINI
-        self.pos_satpam_id = 1526900951678587013  # ID room 🛑・pos-satpam
-        self.welcome_center_id = 1526567698627035246 # ID room 🎒・welcome-center
+        self.pos_satpam_id = 1526900951678587013
+        self.welcome_center_id = 1526567698627035246
 
     async def panggil_gemini_api(self, prompt, image_data, mime_type):
-        """Fungsi rahasia untuk mem-bypass library Google dan tembak API langsung"""
+        print("\n[LOG API] 1. Memulai proses pemanggilan API Gemini...")
         if not gemini_key:
-            raise Exception("Waduh, API Key Gemini belum terbaca dari file .env atau Heroku!")
+            print("[LOG API] ERROR: API Key Gemini kosong!")
+            raise Exception("API Key Gemini belum terbaca dari file .env atau Heroku!")
 
-        # 1. PERBAIKAN: Bersihkan API Key dari spasi atau enter gaib yang bikin URL error 404
         clean_key = gemini_key.strip()
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={clean_key}"
         
-        # Gambar harus diubah jadi teks kode rahasia (Base64) agar bisa dikirim via link
+        print(f"[LOG API] 2. Encode gambar ke Base64 (MimeType: {mime_type})...")
         base64_image = base64.b64encode(image_data).decode('utf-8')
         
-        # 2. PERBAIKAN: API Google wajib pakai camelCase (inlineData & mimeType)
         payload = {
             "contents": [{
                 "parts": [
@@ -95,16 +94,29 @@ class AutoGate(commands.Cog):
             }]
         }
         
+        print("[LOG API] 3. Mengirim request ke server Google...")
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload) as resp:
+                print(f"[LOG API] 4. Mendapat balasan dari Google (Status Code: {resp.status})")
+                
                 if resp.status != 200:
-                    # Print log ke terminal Heroku agar tahu pesan error aslinya jika gagal lagi
                     error_msg = await resp.text()
-                    print(f"DEBUG GEMINI API ERROR: {error_msg}") 
+                    print(f"[LOG API] FATAL ERROR DARI GOOGLE: {error_msg}")
                     raise Exception(f"API Error {resp.status}")
                 
+                # Membaca balasan JSON
                 data = await resp.json()
-                return data['candidates'][0]['content']['parts'][0]['text']
+                print(f"[LOG API] 5. RAW JSON RESPONSE:\n{data}\n")
+                
+                # Mengantisipasi Error 'parts' (seperti kena blokir safety filter)
+                try:
+                    hasil_teks = data['candidates'][0]['content']['parts'][0]['text']
+                    print(f"[LOG API] 6. Teks berhasil diekstrak: {hasil_teks.strip()}")
+                    return hasil_teks
+                except KeyError as e:
+                    print(f"[LOG API] ERROR KEYERROR: {e}")
+                    print(f"[LOG API] Kemungkinan gambar atau prompt diblokir oleh Safety Filter Google.")
+                    raise Exception(f"Struktur API berubah atau diblokir filter. Cek log Heroku!")
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
@@ -127,15 +139,19 @@ class AutoGate(commands.Cog):
             attachment = message.attachments[0]
             
             if any(attachment.filename.lower().endswith(ext) for ext in ['png', 'jpg', 'jpeg']):
+                print(f"\n[LOG SATPAM] User {message.author.name} mengunggah gambar {attachment.filename}")
                 await message.add_reaction("⏳")
                 
                 try:
+                    print("[LOG SATPAM] Sedang mengunduh gambar dari Discord...")
                     async with aiohttp.ClientSession() as session:
                         async with session.get(attachment.url) as resp:
                             if resp.status != 200:
+                                print(f"[LOG SATPAM] Gagal mengunduh gambar! Status: {resp.status}")
                                 await message.channel.send("Gagal mengunduh gambar.")
                                 return
                             image_data = await resp.read()
+                            print(f"[LOG SATPAM] Gambar berhasil diunduh. Ukuran: {len(image_data)} bytes")
 
                     prompt = (
                         "Kamu adalah sistem keamanan otomatis kampus. Cari 2 informasi krusial berikut pada gambar:\n"
@@ -145,11 +161,13 @@ class AutoGate(commands.Cog):
                         "Jika ada yang tidak terpenuhi, balas HANYA dengan kata 'TOLAK'."
                     )
 
-                    # Kirim gambar langsung ke server Google
+                    print("[LOG SATPAM] Melempar gambar dan prompt ke fungsi Gemini API...")
                     hasil_mentah = await self.panggil_gemini_api(prompt, image_data, attachment.content_type)
                     hasil = hasil_mentah.strip().upper()
 
+                    print(f"[LOG SATPAM] Keputusan akhir AI: {hasil}")
                     if "LOLOS" in hasil:
+                        print("[LOG SATPAM] Mengeksekusi penerimaan user...")
                         role_member = discord.utils.get(message.guild.roles, name="MEMBER")
                         if role_member: await message.author.add_roles(role_member)
                         
@@ -173,15 +191,19 @@ class AutoGate(commands.Cog):
                             await welcome_channel.send(content=f"Cek di mari ngab {message.author.mention}!", embed=embed, view=view)
 
                     else:
+                        print("[LOG SATPAM] Mengeksekusi penolakan user...")
                         tolak_msg = await message.channel.send(f"❌ **Verifikasi Gagal, {message.author.mention}.** Surat tidak terdeteksi sebagai dokumen dari Kampus Jakarta tahun ajaran 2026/2027, atau gambar terlalu buram. Silakan upload ulang atau panggil Admin.")
                         await tolak_msg.delete(delay=15)
 
                 except Exception as e:
-                    await message.channel.send(f"⚠️ Waduh, sistem AI lagi pusing: {e}")
+                    print(f"[LOG SATPAM] ERROR TERJADI: {e}")
+                    await message.channel.send(f"⚠️ Waduh, sistem AI lagi pusing: Cek log terminal Admin!")
                 
                 finally:
+                    print("[LOG SATPAM] Menghapus barang bukti gambar dari chat...")
                     try: await message.delete()
                     except: pass
+                    print("[LOG SATPAM] Selesai.\n")
 
 async def setup(bot):
     await bot.add_cog(AutoGate(bot))
