@@ -80,7 +80,7 @@ class AutoGate(commands.Cog):
 
         # 1. PERBAIKAN: Bersihkan API Key dari spasi atau enter gaib yang bikin URL error 404
         clean_key = gemini_key.strip()
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={clean_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={clean_key}"
         
         # Gambar harus diubah jadi teks kode rahasia (Base64) agar bisa dikirim via link
         base64_image = base64.b64encode(image_data).decode('utf-8')
