@@ -78,12 +78,34 @@ class AutoGate(commands.Cog):
         if message.attachments:
             attachment = message.attachments[0]
             if any(attachment.filename.lower().endswith(ext) for ext in ['png', 'jpg', 'jpeg']):
+                
+                # ========================================================
+                # 1. HAPUS PESAN "HALT!" SAAT USER UPLOAD FOTO
+                # ========================================================
+                async for msg in message.channel.history(limit=20):
+                    # Cari pesan dari bot yang me-mention maba tersebut
+                    if msg.author == self.bot.user and message.author.mention in msg.content:
+                        try:
+                            await msg.delete()
+                        except:
+                            pass
+                # ========================================================
+
                 await message.add_reaction("⏳")
                 try:
                     async with aiohttp.ClientSession() as session:
                         async with session.get(attachment.url) as resp:
                             if resp.status != 200: return
                             image_data = await resp.read()
+
+                    # ========================================================
+                    # 2. HAPUS FOTO SECARA INSTAN SETELAH DI-DOWNLOAD BOT
+                    # ========================================================
+                    try:
+                        await message.delete()
+                    except:
+                        pass
+                    # ========================================================
 
                     nama_depan = message.author.display_name.split()[0]
                     
@@ -150,7 +172,7 @@ class AutoGate(commands.Cog):
                 except Exception as e:
                     await message.channel.send(f"⚠️ Waduh, sistem pusing: {e}")
                 finally:
-                    # Selalu hancurkan barang bukti
+                    # Fallback pengaman: coba hapus lagi kalau sebelumnya gagal
                     try: await message.delete()
                     except: pass
 
