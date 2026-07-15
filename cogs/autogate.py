@@ -70,21 +70,27 @@ class AutoGate(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         # MASUKKAN ID ROOM MASING-MASING DI SINI
-        self.pos_satpam_id = 1526900951678587013  # Ganti dengan ID room 🛑・pos-satpam
-        self.welcome_center_id = 1526567698627035246 # Ganti dengan ID room 🎒・welcome-center
+        self.pos_satpam_id = 1526900951678587013  # ID room 🛑・pos-satpam
+        self.welcome_center_id = 1526567698627035246 # ID room 🎒・welcome-center
 
     async def panggil_gemini_api(self, prompt, image_data, mime_type):
         """Fungsi rahasia untuk mem-bypass library Google dan tembak API langsung"""
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
+        if not gemini_key:
+            raise Exception("Waduh, API Key Gemini belum terbaca dari file .env atau Heroku!")
+
+        # 1. PERBAIKAN: Bersihkan API Key dari spasi atau enter gaib yang bikin URL error 404
+        clean_key = gemini_key.strip()
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={clean_key}"
         
         # Gambar harus diubah jadi teks kode rahasia (Base64) agar bisa dikirim via link
         base64_image = base64.b64encode(image_data).decode('utf-8')
         
+        # 2. PERBAIKAN: API Google wajib pakai camelCase (inlineData & mimeType)
         payload = {
             "contents": [{
                 "parts": [
                     {"text": prompt},
-                    {"inline_data": {"mime_type": mime_type, "data": base64_image}}
+                    {"inlineData": {"mimeType": mime_type, "data": base64_image}}
                 ]
             }]
         }
@@ -92,7 +98,9 @@ class AutoGate(commands.Cog):
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload) as resp:
                 if resp.status != 200:
+                    # Print log ke terminal Heroku agar tahu pesan error aslinya jika gagal lagi
                     error_msg = await resp.text()
+                    print(f"DEBUG GEMINI API ERROR: {error_msg}") 
                     raise Exception(f"API Error {resp.status}")
                 
                 data = await resp.json()
@@ -122,7 +130,6 @@ class AutoGate(commands.Cog):
                 await message.add_reaction("⏳")
                 
                 try:
-                    # 1. Unduh gambar
                     async with aiohttp.ClientSession() as session:
                         async with session.get(attachment.url) as resp:
                             if resp.status != 200:
@@ -138,7 +145,7 @@ class AutoGate(commands.Cog):
                         "Jika ada yang tidak terpenuhi, balas HANYA dengan kata 'TOLAK'."
                     )
 
-                    # 2. Kirim gambar langsung ke server Google (Bypass Mode)
+                    # Kirim gambar langsung ke server Google
                     hasil_mentah = await self.panggil_gemini_api(prompt, image_data, attachment.content_type)
                     hasil = hasil_mentah.strip().upper()
 
