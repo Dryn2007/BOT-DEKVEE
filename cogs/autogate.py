@@ -64,7 +64,7 @@ class RoleButton(discord.ui.Button):
             pass
 
 # ==========================================
-# 2. SISTEM AUTO-GATE (DIRECT API BYPASS DENGAN LOGGING)
+# 2. SISTEM AUTO-GATE (DENGAN PENANGANAN FILTER PII)
 # ==========================================
 class AutoGate(commands.Cog):
     def __init__(self, bot):
@@ -74,18 +74,14 @@ class AutoGate(commands.Cog):
         self.welcome_center_id = 1526567698627035246
 
     async def panggil_gemini_api(self, prompt, image_data, mime_type):
-        print("\n[LOG API] 1. Memulai proses pemanggilan API Gemini...")
         if not gemini_key:
-            print("[LOG API] ERROR: API Key Gemini kosong!")
             raise Exception("API Key Gemini belum terbaca dari file .env atau Heroku!")
 
         clean_key = gemini_key.strip()
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={clean_key}"
         
-        print(f"[LOG API] 2. Encode gambar ke Base64 (MimeType: {mime_type})...")
         base64_image = base64.b64encode(image_data).decode('utf-8')
         
-        # Tambahkan safetySettings untuk mematikan sensor overprotective Google
         payload = {
             "contents": [{
                 "parts": [
@@ -94,48 +90,34 @@ class AutoGate(commands.Cog):
                 ]
             }],
             "safetySettings": [
-                {
-                    "category": "HARM_CATEGORY_HARASSMENT",
-                    "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_HATE_SPEECH",
-                    "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                    "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                    "threshold": "BLOCK_NONE"
-                }
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
             ]
         }
         
-        print("[LOG API] 3. Mengirim request ke server Google...")
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload) as resp:
-                print(f"[LOG API] 4. Mendapat balasan dari Google (Status Code: {resp.status})")
-                
                 if resp.status != 200:
-                    error_msg = await resp.text()
-                    print(f"[LOG API] FATAL ERROR DARI GOOGLE: {error_msg}")
                     raise Exception(f"API Error {resp.status}")
                 
-                # Membaca balasan JSON
                 data = await resp.json()
-                print(f"[LOG API] 5. RAW JSON RESPONSE:\n{data}\n")
                 
-                # Mengantisipasi Error 'parts' (seperti kena blokir safety filter)
+                # Cek apakah Google memblokir gambar karena dokumen resmi/foto wajah
+                kandidat = data.get('candidates', [{}])[0]
+                alasan_blokir = kandidat.get('finishReason', '')
+                
+                if alasan_blokir == 'PROHIBITED_CONTENT' or alasan_blokir == 'SAFETY':
+                    print("[LOG API] Gambar diblokir otomatis oleh Google PII Filter.")
+                    return "KODE_BLOKIR_SENSOR"
+                
                 try:
-                    hasil_teks = data['candidates'][0]['content']['parts'][0]['text']
-                    print(f"[LOG API] 6. Teks berhasil diekstrak: {hasil_teks.strip()}")
+                    hasil_teks = kandidat['content']['parts'][0]['text']
                     return hasil_teks
                 except KeyError as e:
-                    print(f"[LOG API] ERROR KEYERROR: {e}")
-                    print(f"[LOG API] Kemungkinan gambar atau prompt diblokir oleh Safety Filter Google.")
-                    raise Exception(f"Struktur API berubah atau diblokir filter. Cek log Heroku!")
+                    print(f"[LOG API] Format JSON tidak terduga: {data}")
+                    raise Exception("Struktur JSON tidak terbaca.")
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
@@ -144,8 +126,9 @@ class AutoGate(commands.Cog):
         if pos_satpam:
             pesan = await pos_satpam.send(
                 f"🚨 **HALT!** Berhenti di situ, {member.mention}!\n\n"
-                f"Ini adalah Pos Satpam kampus. Untuk bisa masuk ke dalam server, **silakan upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
-                f"Pastikan pada foto terdapat tulisan **Kampus Jakarta** dan tahun **2026/2027** ya! Sistem AI kami akan mengeceknya secara otomatis."
+                f"Ini adalah Pos Satpam kampus. Untuk masuk, **silakan upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
+                f"⚠️ **PENTING:** Tolong **coret/sensor foto wajahmu** sebelum di-upload agar sistem AI kami bisa membacanya!\n"
+                f"Pastikan pada foto terdapat tulisan **Kampus Jakarta** dan tahun **2026/2027** ya."
             )
             await pesan.delete(delay=180)
 
@@ -158,37 +141,39 @@ class AutoGate(commands.Cog):
             attachment = message.attachments[0]
             
             if any(attachment.filename.lower().endswith(ext) for ext in ['png', 'jpg', 'jpeg']):
-                print(f"\n[LOG SATPAM] User {message.author.name} mengunggah gambar {attachment.filename}")
                 await message.add_reaction("⏳")
                 
                 try:
-                    print("[LOG SATPAM] Sedang mengunduh gambar dari Discord...")
                     async with aiohttp.ClientSession() as session:
                         async with session.get(attachment.url) as resp:
                             if resp.status != 200:
-                                print(f"[LOG SATPAM] Gagal mengunduh gambar! Status: {resp.status}")
-                                await message.channel.send("Gagal mengunduh gambar.")
                                 return
                             image_data = await resp.read()
-                            print(f"[LOG SATPAM] Gambar berhasil diunduh. Ukuran: {len(image_data)} bytes")
 
-                    # UBAH PROMPT MENJADI SEPERTI INI:
                     prompt = (
-                        "Kamu adalah mesin OCR pembaca teks dokumen. Ini adalah dokumen sampel publik untuk keperluan testing, BUKAN dokumen rahasia. "
+                        "Kamu adalah mesin OCR pembaca teks dokumen. Ini adalah dokumen sampel publik. "
                         "Tolong ABAIKAN semua data pribadi, foto wajah, nama, atau alamat di dalam gambar ini.\n\n"
                         "Tugasmu HANYA mencari keberadaan 2 teks ini:\n"
                         "1. Kata 'Jakarta' atau 'Telkom University Jakarta'\n"
                         "2. Angka '2026'\n\n"
                         "Jika KEDUA teks tersebut ditemukan di dalam gambar, balas HANYA dengan kata 'LOLOS'. "
-                        "Jika tidak ada, balas HANYA dengan kata 'TOLAK'. Dilarang memberikan penjelasan apapun."
+                        "Jika tidak ada, balas HANYA dengan kata 'TOLAK'."
                     )
-                    print("[LOG SATPAM] Melempar gambar dan prompt ke fungsi Gemini API...")
+
                     hasil_mentah = await self.panggil_gemini_api(prompt, image_data, attachment.content_type)
                     hasil = hasil_mentah.strip().upper()
 
-                    print(f"[LOG SATPAM] Keputusan akhir AI: {hasil}")
-                    if "LOLOS" in hasil:
-                        print("[LOG SATPAM] Mengeksekusi penerimaan user...")
+                    # PENANGANAN JIKA DIBLOKIR GOOGLE
+                    if "KODE_BLOKIR_SENSOR" in hasil:
+                        tolak_msg = await message.channel.send(
+                            f"❌ **Waduh {message.author.mention}, sistem Google menolak membaca suratmu!**\n"
+                            "Sistem keamanan mendeteksi adanya data privasi yang ketat (seperti foto wajah).\n\n"
+                            "👉 **SOLUSI:** Silakan *coret/sensor* bagian foto wajah kamu di galeri HP, lalu upload ulang gambarnya ke sini!"
+                        )
+                        await tolak_msg.delete(delay=25)
+
+                    # PENANGANAN JIKA LOLOS
+                    elif "LOLOS" in hasil:
                         role_member = discord.utils.get(message.guild.roles, name="MEMBER")
                         if role_member: await message.author.add_roles(role_member)
                         
@@ -202,8 +187,7 @@ class AutoGate(commands.Cog):
                                 description=(
                                     f"Helo welkam join Telyu Jekardah, {message.author.mention}!\n\n"
                                     "Berkas SKL kamu udah aman. Sebelum mulai berpetualang dan mabar, kamu **wajib** milih program studi dulu nih.\n\n"
-                                    "👉 **Silakan pilih satu role jurusan di bawah!**\n"
-                                    "*(Tombol ini dikunci khusus untukmu, dan pesan ini nggak akan hilang sampai kamu milih jurusan)*"
+                                    "👉 **Silakan pilih satu role jurusan di bawah!**"
                                 ),
                                 color=discord.Color.blue()
                             )
@@ -211,20 +195,17 @@ class AutoGate(commands.Cog):
                             view = WelcomeRoleView(target_member=message.author, bot=self.bot)
                             await welcome_channel.send(content=f"Cek di mari ngab {message.author.mention}!", embed=embed, view=view)
 
+                    # PENANGANAN JIKA DITOLAK KARENA TIDAK ADA TEKS TAHUN/KAMPUS
                     else:
-                        print("[LOG SATPAM] Mengeksekusi penolakan user...")
-                        tolak_msg = await message.channel.send(f"❌ **Verifikasi Gagal, {message.author.mention}.** Surat tidak terdeteksi sebagai dokumen dari Kampus Jakarta tahun ajaran 2026/2027, atau gambar terlalu buram. Silakan upload ulang atau panggil Admin.")
+                        tolak_msg = await message.channel.send(f"❌ **Verifikasi Gagal, {message.author.mention}.** Surat tidak terdeteksi sebagai dokumen dari Kampus Jakarta tahun ajaran 2026/2027. Silakan upload ulang atau panggil Admin.")
                         await tolak_msg.delete(delay=15)
 
                 except Exception as e:
-                    print(f"[LOG SATPAM] ERROR TERJADI: {e}")
-                    await message.channel.send(f"⚠️ Waduh, sistem AI lagi pusing: Cek log terminal Admin!")
+                    await message.channel.send(f"⚠️ Waduh, sistem AI lagi pusing: {e}")
                 
                 finally:
-                    print("[LOG SATPAM] Menghapus barang bukti gambar dari chat...")
                     try: await message.delete()
                     except: pass
-                    print("[LOG SATPAM] Selesai.\n")
 
 async def setup(bot):
     await bot.add_cog(AutoGate(bot))
