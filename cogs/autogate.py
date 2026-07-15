@@ -80,7 +80,7 @@ class AutoGate(commands.Cog):
             raise Exception("API Key Gemini belum terbaca dari file .env atau Heroku!")
 
         clean_key = gemini_key.strip()
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={clean_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={clean_key}"
         
         print(f"[LOG API] 2. Encode gambar ke Base64 (MimeType: {mime_type})...")
         base64_image = base64.b64encode(image_data).decode('utf-8')
