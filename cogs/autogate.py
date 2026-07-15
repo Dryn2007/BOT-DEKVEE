@@ -3,6 +3,7 @@ from discord.ext import commands
 import aiohttp
 import os
 import base64
+import asyncio  # Wajib ditambahkan untuk fitur jeda waktu
 
 # Ambil API key dari .env
 gemini_key = os.getenv("GEMINI_API_KEY")
@@ -161,15 +162,18 @@ class AutoGate(commands.Cog):
 
                         # PENANGANAN JIKA LOLOS SYARAT
                         if syarat_kampus and syarat_tahun:
-                            # 1. Berikan role MEMBER
-                            role_member = discord.utils.get(message.guild.roles, name="MEMBER")
-                            if role_member: await message.author.add_roles(role_member)
-
-                            # 2. Pesan sukses di Pos Satpam
+                            # 1. Kirim pesan sukses di Pos Satpam TERLEBIH DAHULU
                             acc_msg = await message.channel.send(
                                 f"✅ **Verifikasi Berhasil!** Halo **{nama_depan}** {message.author.mention}, akses kampus sudah dibuka. Silakan cek room welcome-center!"
                             )
                             await acc_msg.delete(delay=10)
+
+                            # Beri jeda 5 detik agar pesan terbaca sebelum ruangan menghilang
+                            await asyncio.sleep(5)
+
+                            # 2. Berikan role MEMBER (Room pos-satpam akan otomatis tersembunyi setelah ini)
+                            role_member = discord.utils.get(message.guild.roles, name="MEMBER")
+                            if role_member: await message.author.add_roles(role_member)
 
                             # 3. Sapaan ke Welcome Center
                             welcome_channel = self.bot.get_channel(self.welcome_center_id)
@@ -187,12 +191,18 @@ class AutoGate(commands.Cog):
                                 view = WelcomeRoleView(target_member=message.author, bot=self.bot)
                                 await welcome_channel.send(content=f"Cek di mari ngab **{nama_depan}**!", embed=embed, view=view)
                             
-                            # 4. FITUR BARU: Umumkan ke Room Chat Khusus
+                            # 4. FITUR BARU: Umumkan ke Room Chat Universal dengan Foto Profil
                             pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
                             if pengumuman_channel:
-                                await pengumuman_channel.send(
-                                    f"🎉 **PENGUMUMAN!** Mari sambut mahasiswa baru kita, **{nama_depan}** ({message.author.mention}) yang baru saja lolos verifikasi gerbang utama! Selamat bergabung di kampus!"
+                                embed_pengumuman = discord.Embed(
+                                    title="🎉 MAHASISWA BARU TELAH TIBA!",
+                                    description=f"Mari sambut **{nama_depan}** ({message.author.mention}) yang baru saja lolos verifikasi gerbang utama!\nSelamat bergabung di kampus!",
+                                    color=discord.Color.gold()
                                 )
+                                # Pasang avatar user sebagai thumbnail di embed pengumuman
+                                embed_pengumuman.set_thumbnail(url=message.author.display_avatar.url)
+                                
+                                await pengumuman_channel.send(embed=embed_pengumuman)
 
                         # PENANGANAN JIKA TEKS TIDAK COCOK
                         else:
