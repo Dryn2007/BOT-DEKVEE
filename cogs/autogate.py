@@ -9,7 +9,7 @@ import os
 # Masukkan API Key kamu di sini
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=gemini_api_key)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
 # ==========================================
 # 2. SISTEM TOMBOL WELCOME 
