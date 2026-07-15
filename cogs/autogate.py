@@ -124,8 +124,8 @@ class AutoGate(commands.Cog):
             pesan = await pos_satpam.send(
                 f"🚨 **HALT!** Berhenti di situ, {member.mention}!\n\n"
                 f"Untuk masuk, **upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
-                f"⚠️ **PENTING:** Tolong **coret/sensor Nama Lengkap, Nomor Pendaftaran, dan Foto Wajahmu** agar aman.\n"
-                f"Pastikan teks **Kampus Jakarta** dan tahun **2026/2027** tetap terlihat jelas."
+                f"⚠️ **PENTING:** Pastikan **Nama Lengkap, Program Studi (Prodi), Kampus Jakarta**, dan tahun **2026/2027** terlihat dengan jelas ya!\n"
+                f"Ssst... ruangan ini cuma buat upload gambar, jadi dilarang chat. Langsung drop fotonya aja!"
             )
             await pesan.delete(delay=180)
 
@@ -153,7 +153,7 @@ class AutoGate(commands.Cog):
             if message.author.id not in self.warned_users:
                 self.warned_users.add(message.author.id)
                 peringatan = await message.channel.send(
-                    f"⚠️ **Tahan {message.author.mention}!** Ruangan ini hanya untuk **upload foto SKL** (jpg/png). Tolong jangan mengirim chat atau file lain di sini ya."
+                    f"⚠️ **Tahan {message.author.mention}!** Ruangan ini khusus buat **upload foto SKL** (jpg/png). Tolong jangan ngirim chat atau file lain di mari ya."
                 )
                 await peringatan.delete(delay=10)
             return
@@ -172,19 +172,23 @@ class AutoGate(commands.Cog):
 
             if "KODE_BLOKIR_SENSOR" in hasil_mentah:
                 tolak_msg = await message.channel.send(
-                    f"❌ **Waduh {nama_depan}, sistem Google menolak membaca dokumenmu!** {message.author.mention}\n"
-                    "**SOLUSI:** Sensor bagian Nama Lengkap, Nomor Pendaftaran, dan Foto Wajah. Jika masih gagal, crop gambar agar fokus ke teks Kampus dan Tahun saja."
+                    f"❌ **Waduh {nama_depan}, sistem Google pusing baca dokumenmu!** {message.author.mention}\n"
+                    "**SOLUSI:** Pastikan foto nggak blur dan teks **Nama, Prodi, Kampus, & Tahun** kelihatan jelas. Coba upload ulang gambarnya!"
                 )
                 await tolak_msg.delete(delay=30)
             else:
                 teks = hasil_mentah.lower()
                 syarat_kampus = "jakarta" in teks or "telkom university" in teks
                 syarat_tahun = "2026" in teks
+                
+                # Kita tambahkan pengecekan ekstra untuk prodi agar bot makin pintar
+                prodi_list = ["dkv", "desain komunikasi visual", "teknologi informasi", "tekinfo", "sistem informasi", "sisfor", "telekomunikasi", "tektel"]
+                syarat_prodi = any(p in teks for p in prodi_list)
 
-                if syarat_kampus and syarat_tahun:
+                if syarat_kampus and syarat_tahun and syarat_prodi:
                     # 1. Kirim pesan sukses di Pos Satpam TERLEBIH DAHULU
                     acc_msg = await message.channel.send(
-                        f"✅ **Verifikasi Berhasil!** Halo **{nama_depan}** {message.author.mention}, akses kampus sudah dibuka. Silakan cek room welcome-center!"
+                        f"✅ **Verifikasi Berhasil!** Halo **{nama_depan}** {message.author.mention}, akses kampus lu udah dibuka. Cuss cek room welcome-center!"
                     )
                     await acc_msg.delete(delay=10)
 
@@ -216,7 +220,7 @@ class AutoGate(commands.Cog):
                     if pengumuman_channel:
                         embed_pengumuman = discord.Embed(
                             title="🎉 MAHASISWA BARU TELAH TIBA!",
-                            description=f"Mari sambut **{nama_depan}** ({message.author.mention}) yang baru saja lolos verifikasi gerbang utama!\nSelamat bergabung di kampus!",
+                            description=f"Mari sambut **{nama_depan}** ({message.author.mention}) yang baru aja lolos verifikasi gerbang utama!\nSelamat bergabung di kampus, jangan lupa mampir ke kantin virtual!",
                             color=discord.Color.gold()
                         )
                         embed_pengumuman.set_thumbnail(url=message.author.display_avatar.url)
@@ -225,7 +229,8 @@ class AutoGate(commands.Cog):
 
                 else:
                     tolak_msg = await message.channel.send(
-                        f"❌ **Verifikasi Gagal, {nama_depan}** {message.author.mention}. Dokumen tidak terdeteksi sebagai dokumen dari Kampus Jakarta tahun ajaran 2026/2027. Silakan upload ulang atau panggil Admin."
+                        f"❌ **Verifikasi Gagal, {nama_depan}** {message.author.mention}.\n"
+                        "Dokumen lu kurang lengkap nih! Pastikan **Nama, Prodi, Kampus Jakarta, dan Tahun 2026/2027** benar-benar kelihatan di fotonya. Silakan upload ulang atau panggil Admin."
                     )
                     await tolak_msg.delete(delay=15)
 
