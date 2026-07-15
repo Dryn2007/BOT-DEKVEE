@@ -64,18 +64,17 @@ class RoleButton(discord.ui.Button):
             pass
 
 # ==========================================
-# 2. SISTEM AUTO-GATE (DENGAN PENANGANAN FILTER PII)
+# 2. SISTEM AUTO-GATE (LOGIKA JALAN TIKUS)
 # ==========================================
 class AutoGate(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # MASUKKAN ID ROOM MASING-MASING DI SINI
         self.pos_satpam_id = 1526900951678587013
         self.welcome_center_id = 1526567698627035246
 
     async def panggil_gemini_api(self, prompt, image_data, mime_type):
         if not gemini_key:
-            raise Exception("API Key Gemini belum terbaca dari file .env atau Heroku!")
+            raise Exception("API Key Gemini belum terbaca!")
 
         clean_key = gemini_key.strip()
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={clean_key}"
@@ -103,34 +102,28 @@ class AutoGate(commands.Cog):
                     raise Exception(f"API Error {resp.status}")
                 
                 data = await resp.json()
-                
-                # Cek apakah Google memblokir gambar karena dokumen resmi/foto wajah
                 kandidat = data.get('candidates', [{}])[0]
-                alasan_blokir = kandidat.get('finishReason', '')
                 
-                if alasan_blokir == 'PROHIBITED_CONTENT' or alasan_blokir == 'SAFETY':
-                    print("[LOG API] Gambar diblokir otomatis oleh Google PII Filter.")
+                # Cek filter Google
+                if kandidat.get('finishReason') in ['PROHIBITED_CONTENT', 'SAFETY']:
                     return "KODE_BLOKIR_SENSOR"
                 
                 try:
-                    hasil_teks = kandidat['content']['parts'][0]['text']
-                    return hasil_teks
-                except KeyError as e:
-                    print(f"[LOG API] Format JSON tidak terduga: {data}")
-                    raise Exception("Struktur JSON tidak terbaca.")
+                    return kandidat['content']['parts'][0]['text']
+                except KeyError:
+                    raise Exception("Format JSON tidak terbaca.")
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
         if member.bot: return
         pos_satpam = self.bot.get_channel(self.pos_satpam_id)
         if pos_satpam:
-            pesan = await pos_satpam.send(
+            await pos_satpam.send(
                 f"🚨 **HALT!** Berhenti di situ, {member.mention}!\n\n"
-                f"Ini adalah Pos Satpam kampus. Untuk masuk, **silakan upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
-                f"⚠️ **PENTING:** Tolong **coret/sensor Nama Lengkap, Nomor Pendaftaran, dan Foto Wajahmu** pada surat tersebut sebelum di-upload agar sistem AI kami bisa membacanya!\n"
-                f"Pastikan pada foto masih terlihat jelas tulisan **Kampus Jakarta** dan tahun **2026/2027** ya."
+                f"Untuk masuk, **upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
+                f"⚠️ **PENTING:** Tolong **coret/sensor Nama Lengkap, Nomor Pendaftaran, dan Foto Wajahmu** agar sistem AI bisa membacanya!\n"
+                f"Pastikan teks **Kampus Jakarta** dan tahun **2026/2027** tetap terlihat jelas."
             )
-            await pesan.delete(delay=180)
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -139,74 +132,43 @@ class AutoGate(commands.Cog):
 
         if message.attachments:
             attachment = message.attachments[0]
-            
             if any(attachment.filename.lower().endswith(ext) for ext in ['png', 'jpg', 'jpeg']):
                 await message.add_reaction("⏳")
-                
                 try:
                     async with aiohttp.ClientSession() as session:
                         async with session.get(attachment.url) as resp:
-                            if resp.status != 200:
-                                return
+                            if resp.status != 200: return
                             image_data = await resp.read()
 
-                    # === MENGAMBIL NAMA DEPAN DARI DISCORD ===
-                    nama_lengkap_discord = message.author.display_name
-                    nama_depan = nama_lengkap_discord.split()[0] 
-
-                    prompt = (
-                        "Kamu adalah mesin OCR pembaca teks dokumen. Ini adalah dokumen sampel publik. "
-                        "Tolong ABAIKAN semua data pribadi, foto wajah, nama, atau alamat di dalam gambar ini.\n\n"
-                        "Tugasmu HANYA mencari keberadaan 2 teks ini:\n"
-                        "1. Kata 'Jakarta' atau 'Telkom University Jakarta'\n"
-                        "2. Angka '2026'\n\n"
-                        "Jika KEDUA teks tersebut ditemukan di dalam gambar, balas HANYA dengan kata 'LOLOS'. "
-                        "Jika tidak ada, balas HANYA dengan kata 'TOLAK'."
-                    )
+                    nama_depan = message.author.display_name.split()[0]
+                    # AI hanya menyalin teks saja
+                    prompt = "Salin dan ketik ulang seluruh teks yang bisa kamu baca di gambar ini. Jangan berikan komentar, penjelasan, atau peringatan."
 
                     hasil_mentah = await self.panggil_gemini_api(prompt, image_data, attachment.content_type)
-                    hasil = hasil_mentah.strip().upper()
-
-                    # PENANGANAN JIKA DIBLOKIR GOOGLE
-                    if "KODE_BLOKIR_SENSOR" in hasil:
+                    
+                    if "KODE_BLOKIR_SENSOR" in hasil_mentah:
                         tolak_msg = await message.channel.send(
-                            f"❌ **Waduh {nama_depan}, sistem Google menolak membaca suratmu!** {message.author.mention}\n"
-                            "Sistem keamanan mendeteksi adanya data privasi yang ketat pada dokumenmu.\n\n"
-                            "👉 **SOLUSI:** Silakan *coret/sensor* bagian **Nama Lengkap, Nomor Pendaftaran, dan Foto Wajah** kamu di galeri HP, lalu upload ulang gambarnya ke sini! Biarkan teks nama kampus dan tahunnya saja yang terlihat."
+                            f"❌ **Waduh {nama_depan}, sistem Google menolak membaca dokumenmu!** {message.author.mention}\n"
+                            "👉 **SOLUSI:** Sensor bagian Nama Lengkap, Nomor Pendaftaran, dan Foto Wajah. Jika masih gagal, potong (crop) gambarnya hanya di bagian teks tahun dan nama kampus saja!"
                         )
                         await tolak_msg.delete(delay=30)
-
-                    # PENANGANAN JIKA LOLOS
-                    elif "LOLOS" in hasil:
-                        role_member = discord.utils.get(message.guild.roles, name="MEMBER")
-                        if role_member: await message.author.add_roles(role_member)
-                        
-                        acc_msg = await message.channel.send(f"✅ **Verifikasi Berhasil!** Halo **{nama_depan}** {message.author.mention}, akses kampus sudah dibuka. Silakan cek room welcome-center!")
-                        await acc_msg.delete(delay=10)
-
-                        welcome_channel = self.bot.get_channel(self.welcome_center_id)
-                        if welcome_channel:
-                            embed = discord.Embed(
-                                title="🎓 Welcome to Telyu Jekardah!",
-                                description=(
-                                    f"Helo welkam join Telyu Jekardah, kak **{nama_depan}**! {message.author.mention}\n\n"
-                                    "Berkas SKL kamu udah aman. Sebelum mulai berpetualang dan mabar, kamu **wajib** milih program studi dulu nih.\n\n"
-                                    "👉 **Silakan pilih satu role jurusan di bawah!**"
-                                ),
-                                color=discord.Color.blue()
-                            )
-                            embed.set_thumbnail(url=message.author.display_avatar.url)
-                            view = WelcomeRoleView(target_member=message.author, bot=self.bot)
-                            await welcome_channel.send(content=f"Cek di mari ngab **{nama_depan}**!", embed=embed, view=view)
-
-                    # PENANGANAN JIKA DITOLAK KARENA TIDAK ADA TEKS TAHUN/KAMPUS
                     else:
-                        tolak_msg = await message.channel.send(f"❌ **Verifikasi Gagal, {nama_depan}** {message.author.mention}. Surat tidak terdeteksi sebagai dokumen dari Kampus Jakarta tahun ajaran 2026/2027. Silakan upload ulang atau panggil Admin.")
-                        await tolak_msg.delete(delay=15)
-
+                        # Logika Python (Bukan AI) yang menentukan Lolos atau Tidak
+                        teks = hasil_mentah.lower()
+                        if ("jakarta" in teks or "telkom university" in teks) and "2026" in teks:
+                            role_member = discord.utils.get(message.guild.roles, name="MEMBER")
+                            if role_member: await message.author.add_roles(role_member)
+                            
+                            await message.channel.send(f"✅ **Verifikasi Berhasil!** Halo **{nama_depan}** {message.author.mention}, akses terbuka!")
+                            
+                            welcome_channel = self.bot.get_channel(self.welcome_center_id)
+                            if welcome_channel:
+                                embed = discord.Embed(title="🎓 Welcome!", description=f"Helo kak **{nama_depan}**, silakan pilih jurusan!", color=discord.Color.blue())
+                                await welcome_channel.send(embed=embed, view=WelcomeRoleView(target_member=message.author, bot=self.bot))
+                        else:
+                            await message.channel.send(f"❌ **Gagal {nama_depan}**, dokumen tidak terdeteksi sebagai Kampus Jakarta 2026/2027. Pastikan teks terlihat jelas.")
                 except Exception as e:
-                    await message.channel.send(f"⚠️ Waduh, sistem AI lagi pusing: {e}")
-                
+                    await message.channel.send(f"⚠️ Waduh, sistem pusing: {e}")
                 finally:
                     try: await message.delete()
                     except: pass
