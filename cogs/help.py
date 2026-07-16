@@ -109,6 +109,12 @@ class HelpDropdown(discord.ui.Select):
             
         await interaction.response.edit_message(embed=embed, view=view)
 
+        # >>> PERBAIKAN DARI CLAUDE: Sinkronkan referensi pesan <<<
+        try:
+            view.cog.dashboard_message = await interaction.original_response()
+        except Exception as e:
+            print(f"[HelpDropdown] Gagal sinkronisasi pesan: {e!r}")
+
 
 class DoneButton(discord.ui.Button):
     def __init__(self, parent_view):
@@ -137,7 +143,7 @@ class HelpDashboardView(discord.ui.View):
         self.cog = cog
         self.locked_user = None
         self.timeout_task = None
-        self.expire_ts = None   # <<< TAMBAHAN DARI CLAUDE
+        self.expire_ts = None   
         self.message = None 
         
         self.dropdown = HelpDropdown(self)
@@ -168,9 +174,10 @@ class HelpDashboardView(discord.ui.View):
         await asyncio.sleep(20.0)
         await self.reset_dashboard()
 
+    # >>> PERBAIKAN DARI CLAUDE: Buka log error di reset_dashboard <<<
     async def reset_dashboard(self, interaction=None):
         self.locked_user = None
-        self.expire_ts = None   # <<< TAMBAHAN DARI CLAUDE
+        self.expire_ts = None
         if self.timeout_task:
             self.timeout_task.cancel()
             self.timeout_task = None
@@ -187,18 +194,23 @@ class HelpDashboardView(discord.ui.View):
         if interaction:
             try:
                 await interaction.response.edit_message(embed=embed, view=self)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[reset_dashboard via interaction] ERROR: {e!r}")
+                traceback.print_exc()
         elif self.message:
             try:
                 await self.message.edit(embed=embed, view=self)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[reset_dashboard via self.message] ERROR: {e!r}")
+                traceback.print_exc()
         elif self.cog.dashboard_message:
             try:
                 await self.cog.dashboard_message.edit(embed=embed, view=self)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[reset_dashboard via cog.dashboard_message] ERROR: {e!r}")
+                traceback.print_exc()
+        else:
+            print("[reset_dashboard] cog.dashboard_message is None — tidak ada pesan untuk di-reset!")
 
 
 class HelpMenu(commands.Cog):
