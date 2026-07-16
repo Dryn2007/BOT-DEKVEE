@@ -60,23 +60,26 @@ class PrivateDoneButton(discord.ui.Button):
         # 1. Buka kembali gembok Grid di luar
         await self.view.main_view.unlock_grid(self.view.grid_index)
         
-        # 2. Hapus menu private agar bersih
+        # 2. Hapus menu private instan (tanpa pesan "Sesi selesai")
         try:
-            await interaction.response.edit_message(content="✅ **Sesi selesai.** Grid telah dikembalikan dan siap digunakan orang lain.", embed=None, view=None)
+            await interaction.response.defer()
+            await interaction.delete_original_response()
         except Exception:
-            pass
+            try:
+                await interaction.message.delete()
+            except Exception:
+                pass
 
 
 class PrivateHelpView(discord.ui.View):
     def __init__(self, main_view, grid_index):
-        super().__init__(timeout=60.0) # Waktu baca 60 detik
+        super().__init__(timeout=60.0)
         self.main_view = main_view
         self.grid_index = grid_index
         self.add_item(PrivateHelpDropdown())
         self.add_item(PrivateDoneButton())
 
     async def on_timeout(self):
-        # Kalau user ketiduran / AFK 60 detik, paksa buka gembok Grid
         await self.main_view.unlock_grid(self.grid_index)
 
 
@@ -88,54 +91,73 @@ class MainDashboardView(discord.ui.View):
         super().__init__(timeout=None)
         self.cog = cog
         
-        # Menyimpan data siapa yang menempati 4 slot grid
         self.grid_status = [None, None, None, None] 
         self.grid_tasks = [None, None, None, None]
 
-        # Membuat 4 Tombol Grid (2 Baris)
         for i in range(4):
             btn = discord.ui.Button(
                 label=f"Grid {i+1} (Tersedia)",
                 style=discord.ButtonStyle.success,
                 custom_id=f"help_grid_{i}",
-                row=i // 2 # Ini trik bikin bentuk kotak 2x2
+                row=i // 2
             )
+            # Tombol secara permanen tidak di-disable agar bisa di-handle oleh logika 'Bouncer'
             btn.callback = self.make_callback(i)
             self.add_item(btn)
 
     def make_callback(self, index):
         async def callback(interaction: discord.Interaction):
-            # Cek apakah Grid ini sudah diisi orang
+            user_id = interaction.user.id
+
+            # LOGIKA A: Grid Ini Sedang Dipakai
             if self.grid_status[index] is not None:
-                await interaction.response.send_message(
-                    "⛔ **Grid ini sedang dipakai!** Silakan pilih Grid lain yang warnanya hijau.", 
-                    ephemeral=True
-                )
-                return
-
-            # 1. KUNCI GRID-NYA
-            self.grid_status[index] = interaction.user.id
-            button = self.children[index]
+                if self.grid_status[index] != user_id:
+                    # Bouncer: Tolak jika yang klik adalah orang lain
+                    await interaction.response.send_message(
+                        "⛔ **Grid ini sedang dipakai orang lain!** Silakan pilih Grid yang berwarna hijau (Tersedia).", 
+                        ephemeral=True
+                    )
+                    return
+                # Jika yang klik adalah PEMILIK aslinya, lewati tahap ubah tombol dan langsung resend menu
             
-            # Singkat nama agar tombol tidak kepanjangan (Maks 10 karakter)
-            nama = interaction.user.display_name[:10]
-            button.label = f"🔒 Dipakai {nama}"
-            button.style = discord.ButtonStyle.secondary
-            button.disabled = True
+            # LOGIKA B: Grid Ini Kosong (Baru mau dipakai)
+            else:
+                # Cek dulu: Jangan biarkan 1 orang merampok 2 Grid sekaligus
+                for i, status in enumerate(self.grid_status):
+                    if status == user_id:
+                        await interaction.response.send_message(
+                            f"⚠️ **Kamu masih memegang Grid {i+1}!**\nSilakan buka kembali Grid tersebut jika menumu hilang, atau tunggu waktunya habis.", 
+                            ephemeral=True
+                        )
+                        return
 
-            # 2. UPDATE TAMPILAN TOMBOL DI LUAR
-            await interaction.response.edit_message(view=self)
+                # Kunci Grid ini untuk user tersebut
+                self.grid_status[index] = user_id
+                button = self.children[index]
+                
+                nama = interaction.user.display_name[:10]
+                button.label = f"🔒 Dipakai {nama}"
+                button.style = discord.ButtonStyle.secondary
+                
+                # Update tampilan utama untuk memunculkan warna abu-abu ke publik
+                await interaction.response.edit_message(view=self)
 
-            # 3. KIRIM MENU PRIVATE KE USER YANG NGEKLIK
+            # LOGIKA C: Kirim (atau kirim ulang) Menu Private
             private_view = PrivateHelpView(self, index)
             embed_intro = discord.Embed(
                 title=f"🚪 Masuk Grid {index+1}",
                 description="Silakan pilih panduan dari menu di bawah.\n\n*Catatan: Hanya kamu yang bisa melihat pesan ini. Waktu bacamu 60 detik. Klik **Tutup & Selesai** jika sudah beres agar grid ini bisa dipakai orang lain.*",
                 color=discord.Color.brand_green()
             )
-            await interaction.followup.send(embed=embed_intro, view=private_view, ephemeral=True)
+            
+            # Jika ini "Resend" (klik ulang), edit_message di atas tidak dieksekusi, jadi kita pakai send_message
+            if not interaction.response.is_done():
+                await interaction.response.send_message(embed=embed_intro, view=private_view, ephemeral=True)
+            else:
+                # Jika ini pertama kali (edit_message tereksekusi), kita pakai followup
+                await interaction.followup.send(embed=embed_intro, view=private_view, ephemeral=True)
 
-            # 4. MULAI TIMER AUTO-RESET
+            # LOGIKA D: Restart Timer (Ini dia fitur Auto-Reset / Satpam Gaib-nya)
             if self.grid_tasks[index]:
                 self.grid_tasks[index].cancel()
             self.grid_tasks[index] = self.cog.bot.loop.create_task(self.timer_logic(index))
@@ -144,28 +166,25 @@ class MainDashboardView(discord.ui.View):
 
     async def timer_logic(self, index):
         try:
-            await asyncio.sleep(60.0)
-            await self.unlock_grid(index)
+            await asyncio.sleep(60.0) # Tunggu 60 detik
+            await self.unlock_grid(index) # Eksekusi pembersihan Grid jika waktu habis
         except asyncio.CancelledError:
             pass
 
     async def unlock_grid(self, index):
-        # Jika Grid memang sudah kosong, hiraukan
         if self.grid_status[index] is None:
             return
 
-        # Buka kembali Grid menjadi Hijau
+        # Kembalikan status Grid ke Hijau
         self.grid_status[index] = None
         button = self.children[index]
         button.label = f"Grid {index+1} (Tersedia)"
         button.style = discord.ButtonStyle.success
-        button.disabled = False
 
         if self.grid_tasks[index]:
             self.grid_tasks[index].cancel()
             self.grid_tasks[index] = None
 
-        # Perbarui tampilan dashboard luar
         if self.cog.dashboard_message:
             try:
                 await self.cog.dashboard_message.edit(view=self)
@@ -203,12 +222,12 @@ class HelpMenu(commands.Cog):
 
         try:
             await channel.purge(limit=100)
-        except Exception as e:
+        except Exception:
             traceback.print_exc()
 
         embed = discord.Embed(
             title="🛠️ Pusat Bantuan DekVee (Sistem 4 Grid)",
-            description="Selamat datang di Pusat Bantuan!\n\nUntuk menghindari berebut menu, silakan klik salah satu **Grid Hijau** di bawah ini untuk membuka menu panduan khusus untukmu.\n\n*(Jika Grid abu-abu dan tergembok, artinya sedang dibaca user lain)*",
+            description="Selamat datang di Pusat Bantuan!\n\nUntuk menghindari antrean macet, silakan klik salah satu **Grid Hijau** di bawah ini untuk membuka menu panduan rahasia khusus untukmu.\n\n*(Jika tidak sengaja ter-close, silakan klik kembali Grid abu-abu milikmu untuk memunculkan ulang menunya)*",
             color=discord.Color.dark_theme()
         )
 
@@ -238,6 +257,7 @@ class HelpMenu(commands.Cog):
                 await message.delete()
             except Exception:
                 pass
+
 
 async def setup(bot):
     await bot.add_cog(HelpMenu(bot))
