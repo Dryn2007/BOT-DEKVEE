@@ -65,7 +65,7 @@ class RoleButton(discord.ui.Button):
 
 
 # ==========================================
-# 2. SISTEM AUTO-GATE (FULL PROTECTION)
+# 2. SISTEM AUTO-GATE (DENGAN PENYAPU OTOMATIS)
 # ==========================================
 class AutoGate(commands.Cog):
     def __init__(self, bot):
@@ -121,23 +121,21 @@ class AutoGate(commands.Cog):
         if member.bot: return
         pos_satpam = self.bot.get_channel(self.pos_satpam_id)
         if pos_satpam:
-            pesan = await pos_satpam.send(
+            # Pesan HALT dikirim tanpa timer, biar dihapus pas dia upload SKL
+            await pos_satpam.send(
                 f"🚨 **HALT!** Berhenti di situ, {member.mention}!\n\n"
                 f"Untuk masuk, **upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
                 f"⚠️ **PENTING:** Pastikan **Nama Lengkap, Program Studi (Prodi), Kampus Jakarta**, dan tahun **2026/2027** terlihat dengan jelas ya!\n\n"
                 f"📄 **Cek contoh SKL yang valid di sini:** https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing\n\n"
                 f"Ssst... ruangan ini cuma buat upload gambar, jadi dilarang chat. Langsung drop fotonya aja!"
             )
-            await pesan.delete(delay=180)
 
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or message.channel.id != self.pos_satpam_id:
             return
 
-        # ==========================================
-        # FITUR BARU: CEGAT ORANG YANG SUDAH LOLOS
-        # ==========================================
+        # CEGAT ORANG YANG UDAH LOLOS
         role_member = discord.utils.get(message.guild.roles, name="MEMBER")
         if role_member and role_member in message.author.roles:
             try:
@@ -158,7 +156,7 @@ class AutoGate(commands.Cog):
             if any(attachment.filename.lower().endswith(ext) for ext in ['png', 'jpg', 'jpeg']):
                 is_valid_image = True
 
-        # JIKA BUKAN GAMBAR (CHAT BIASA ATAU FILE LAIN) -> HAPUS DAN PERINGATKAN SEKALI
+        # JIKA BUKAN GAMBAR -> HAPUS DAN PERINGATKAN SEKALI
         if not is_valid_image:
             try:
                 await message.delete()
@@ -174,13 +172,29 @@ class AutoGate(commands.Cog):
                 await peringatan.delete(delay=15)
             return
 
-        # JIKA GAMBAR VALID, LANJUTKAN PROSES
-        await message.add_reaction("⏳")
+        # ==========================================
+        # JIKA GAMBAR VALID: BERSIHKAN RUANGAN!
+        # ==========================================
+        # 1. Sapu bersih pesan "HALT!" dan pesan error sebelumnya
+        async for msg in message.channel.history(limit=50):
+            if msg.author == self.bot.user and message.author.mention in msg.content:
+                try:
+                    await msg.delete()
+                except:
+                    pass
+
         try:
+            # 2. Download Gambar
             async with aiohttp.ClientSession() as session:
                 async with session.get(attachment.url) as resp:
                     if resp.status != 200: return
                     image_data = await resp.read()
+
+            # 3. Hapus foto user secara instan biar room langsung bersih
+            try:
+                await message.delete()
+            except:
+                pass
 
             nama_depan = message.author.display_name.split()[0]
             prompt = "Salin dan ketik ulang seluruh teks yang bisa kamu baca di gambar ini. Jangan berikan penjelasan apapun."
@@ -191,7 +205,7 @@ class AutoGate(commands.Cog):
                     f"❌ **Waduh {nama_depan}, sistem Google pusing baca dokumenmu!** {message.author.mention}\n"
                     "**SOLUSI:** Pastikan foto nggak blur dan teks **Nama, Prodi, Kampus, & Tahun** kelihatan jelas. Coba upload ulang gambarnya!"
                 )
-                await tolak_msg.delete(delay=30)
+                # Pesan error akan ikut tersapu saat user upload gambar baru
             else:
                 teks = hasil_mentah.lower()
                 syarat_kampus = "jakarta" in teks or "telkom university" in teks
@@ -201,19 +215,24 @@ class AutoGate(commands.Cog):
                 syarat_prodi = any(p in teks for p in prodi_list)
 
                 if syarat_kampus and syarat_tahun and syarat_prodi:
-                    # 1. Kirim pesan sukses di Pos Satpam TERLEBIH DAHULU
+                    # Kirim pesan sukses di Pos Satpam
                     acc_msg = await message.channel.send(
                         f"✅ **Verifikasi Berhasil!** Halo **{nama_depan}** {message.author.mention}, akses kampus lu udah dibuka. Cuss cek room welcome-center!"
                     )
-                    await acc_msg.delete(delay=10)
-
-                    # Beri jeda 5 detik agar pesan terbaca sebelum ruangan menghilang
+                    
+                    # Beri jeda 5 detik agar pesan terbaca
                     await asyncio.sleep(5)
+                    
+                    # 4. Hapus pesan sukses setelah dibaca
+                    try:
+                        await acc_msg.delete()
+                    except:
+                        pass
 
-                    # 2. Berikan role MEMBER
+                    # Berikan role MEMBER (Room pos-satpam akan otomatis tersembunyi)
                     if role_member: await message.author.add_roles(role_member)
 
-                    # 3. Sapaan ke Welcome Center
+                    # Sapaan ke Welcome Center
                     welcome_channel = self.bot.get_channel(self.welcome_center_id)
                     if welcome_channel:
                         embed = discord.Embed(
@@ -229,7 +248,7 @@ class AutoGate(commands.Cog):
                         view = WelcomeRoleView(target_member=message.author, bot=self.bot)
                         await welcome_channel.send(content=f"Cek di mari ngab **{nama_depan}**!", embed=embed, view=view)
                     
-                    # 4. Umumkan ke Room Chat Universal dengan Foto Profil
+                    # Umumkan ke Room Chat Universal dengan Foto Profil
                     pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
                     if pengumuman_channel:
                         embed_pengumuman = discord.Embed(
@@ -247,11 +266,12 @@ class AutoGate(commands.Cog):
                         f"Dokumen lu kurang lengkap nih! Pastikan **Nama, Prodi, Kampus Jakarta, dan Tahun 2026/2027** benar-benar kelihatan di fotonya. Silakan upload ulang atau panggil Admin.\n"
                         f"📄 **Cek contoh SKL yang bener di sini:** https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing"
                     )
-                    await tolak_msg.delete(delay=15)
+                    # Pesan gagal juga akan disapu jika user kirim gambar lagi
 
         except Exception as e:
             await message.channel.send(f"⚠️ Waduh, sistem pusing: {e}")
         finally:
+            # Backup pengaman hapus gambar
             try: await message.delete()
             except: pass
 
