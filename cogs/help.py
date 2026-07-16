@@ -3,7 +3,8 @@ from discord.ext import commands
 import asyncio
 
 class HelpDropdown(discord.ui.Select):
-    def __init__(self):
+    def __init__(self, parent_view):
+        self.parent_view = parent_view
         opsi = [
             discord.SelectOption(
                 label="Leveling & Rank", 
@@ -14,13 +15,35 @@ class HelpDropdown(discord.ui.Select):
                 label="Voice Log", 
                 description="Panduan statistik durasi Voice Channel", 
                 emoji="🔊"
+            ),
+            discord.SelectOption(
+                label="Admin Menu", 
+                description="Panduan command khusus Admin/Owner", 
+                emoji="👑"
             )
         ]
         super().__init__(placeholder="Pilih fitur yang ingin dilihat...", min_values=1, max_values=1, options=opsi)
 
     async def callback(self, interaction: discord.Interaction):
-        # Tentukan isi pesan berdasarkan pilihan user
-        if self.values[0] == "Leveling & Rank":
+        view = self.parent_view
+        
+        # 1. CEK SISTEM ANTREAN / LOCKING
+        if view.locked_user is not None and view.locked_user != interaction.user.id:
+            await interaction.response.send_message(
+                "⚠️ **Mohon tunggu!** Menu bantuan sedang digunakan oleh user lain. Sistem akan reset otomatis dalam 20 detik jika tidak ada aktivitas.", 
+                ephemeral=True
+            )
+            return
+            
+        # 2. KUNCI DASHBOARD UNTUK USER INI & RESTART TIMER
+        view.locked_user = interaction.user.id
+        await view.start_timer()
+        
+        # 3. TENTUKAN ISI PESAN
+        val = self.values[0]
+        embed = discord.Embed()
+        
+        if val == "Leveling & Rank":
             embed = discord.Embed(
                 title="🏆 Panduan Leveling & Rank",
                 description="Bot menggunakan sistem Hybrid! Kamu dapat XP dari Chat (2 XP) dan dari VC (1 XP / 2 Menit).",
@@ -29,7 +52,7 @@ class HelpDropdown(discord.ui.Select):
             embed.add_field(name="`!rank`", value="Melihat profil level, rank Hunter, dan progress bar XP kamu saat ini.", inline=False)
             embed.add_field(name="`!leaderboard`", value="Melihat 10 Hunter dengan level dan XP tertinggi di server.", inline=False)
             
-        elif self.values[0] == "Voice Log":
+        elif val == "Voice Log":
             embed = discord.Embed(
                 title="🔊 Panduan Voice Log",
                 description="Bot mencatat berapa lama kamu nongkrong di Voice Channel secara permanen.",
@@ -38,22 +61,91 @@ class HelpDropdown(discord.ui.Select):
             embed.add_field(name="`!vclog`", value="Menampilkan total statistik durasi seluruh member di VC untuk hari ini.", inline=False)
             embed.add_field(name="`!vclog history`", value="Menampilkan menu untuk melihat data durasi VC pada tanggal/hari sebelumnya.", inline=False)
 
-        # Update pesan dengan embed yang baru
-        await interaction.response.edit_message(embed=embed)
+        elif val == "Admin Menu":
+            embed = discord.Embed(
+                title="👑 Panduan Admin Menu",
+                description="Command khusus yang hanya bisa diakses oleh petinggi server.",
+                color=discord.Color.red()
+            )
+            embed.add_field(name="`!clear`", value="**Akses:** Owner Bot\n**Fungsi:** Menghapus (purge) pesan di channel (default 5, max 100).", inline=False)
+            embed.add_field(name="`!spawnstats`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memaksa dashboard statistik muncul ulang.", inline=False)
+            embed.add_field(name="`!testxp <jumlah>`", value="**Akses:** Administrator\n**Fungsi:** Mode testing untuk suntik XP ke akun sendiri secara instan.", inline=False)
+
+        # Ubah teks placeholder dropdown
+        self.placeholder = f"Sedang melihat: {val}"
+
+        # 4. TAMBAHKAN TOMBOL "SELESAI" JIKA BELUM ADA
+        if view.done_button not in view.children:
+            view.add_item(view.done_button)
+            
+        await interaction.response.edit_message(embed=embed, view=view)
 
 
-class HelpView(discord.ui.View):
-    def __init__(self):
-        # View akan timeout (hangus) setelah 10 detik
-        super().__init__(timeout=10.0)
-        self.message = None
-        self.add_item(HelpDropdown())
+class DoneButton(discord.ui.Button):
+    def __init__(self, parent_view):
+        self.parent_view = parent_view
+        super().__init__(label="Selesai Membaca", style=discord.ButtonStyle.success, emoji="✅")
+        
+    async def callback(self, interaction: discord.Interaction):
+        view = self.parent_view
+        
+        # Tolak jika user yang klik bukan yang sedang pegang kendali
+        if view.locked_user != interaction.user.id:
+            await interaction.response.send_message("⚠️ Hanya user yang sedang membaca yang bisa menyelesaikan sesi ini.", ephemeral=True)
+            return
+            
+        await interaction.response.defer()
+        await view.reset_dashboard()
 
-    async def on_timeout(self):
-        # Jika tidak ada aktivitas selama 10 detik, pesan help akan dihapus
-        if self.message:
+
+class HelpDashboardView(discord.ui.View):
+    def __init__(self, cog):
+        # Timeout None agar view menetap selamanya di channel
+        super().__init__(timeout=None)
+        self.cog = cog
+        
+        # Variabel untuk sistem antrean dan timer
+        self.locked_user = None
+        self.timeout_task = None
+        
+        # Inisialisasi komponen UI
+        self.dropdown = HelpDropdown(self)
+        self.done_button = DoneButton(self)
+        self.add_item(self.dropdown)
+
+    async def start_timer(self):
+        """Memulai atau merestart countdown 20 detik saat user beraktivitas."""
+        if self.timeout_task:
+            self.timeout_task.cancel()
+        self.timeout_task = asyncio.create_task(self.timer_logic())
+
+    async def timer_logic(self):
+        """Menunggu 20 detik, lalu mereset dashboard."""
+        await asyncio.sleep(20.0)
+        await self.reset_dashboard()
+
+    async def reset_dashboard(self):
+        """Fungsi untuk mengembalikan dashboard ke wujud awal (Main Menu)."""
+        self.locked_user = None
+        if self.timeout_task:
+            self.timeout_task.cancel()
+            self.timeout_task = None
+        
+        # Reset visual
+        self.dropdown.placeholder = "Pilih fitur yang ingin dilihat..."
+        if self.done_button in self.children:
+            self.remove_item(self.done_button)
+        
+        embed = discord.Embed(
+            title="🛠️ Pusat Bantuan DekVee",
+            description="Selamat datang di Pusat Bantuan!\n\nSilakan pilih menu di bawah ini untuk melihat detail fitur bot.\n\n*(Sistem menggunakan antrean: jika sedang dipakai, harap tunggu giliranmu)*",
+            color=discord.Color.dark_theme()
+        )
+        
+        # Edit pesan dashboard bot ke bentuk semula
+        if self.cog.dashboard_message:
             try:
-                await self.message.delete()
+                await self.cog.dashboard_message.edit(embed=embed, view=self)
             except Exception:
                 pass
 
@@ -61,67 +153,44 @@ class HelpView(discord.ui.View):
 class HelpMenu(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Nonaktifkan command help bawaan Discord
         self.bot.remove_command('help')
-        # Melacak pesan embed help yang sedang aktif agar tidak numpuk
-        self.active_msg = None 
+        self.ROOM_HELP_ID = 1526498364932227092
+        self.dashboard_message = None 
 
-    # --- FITUR AUTO-DELETE SUPER KETAT ---
+    async def cog_load(self):
+        """Otomatis memunculkan dashboard di room saat bot menyala."""
+        self.bot.loop.create_task(self.spawn_dashboard())
+
+    async def spawn_dashboard(self):
+        await self.bot.wait_until_ready()
+        channel = self.bot.get_channel(self.ROOM_HELP_ID)
+        if not channel:
+            return
+
+        # Sapu bersih semua pesan lama di room tersebut
+        await channel.purge(limit=100)
+
+        embed = discord.Embed(
+            title="🛠️ Pusat Bantuan DekVee",
+            description="Selamat datang di Pusat Bantuan!\n\nSilakan pilih menu di bawah ini untuk melihat detail fitur bot.\n\n*(Sistem menggunakan antrean: jika sedang dipakai, harap tunggu giliranmu)*",
+            color=discord.Color.dark_theme()
+        )
+        
+        view = HelpDashboardView(self)
+        self.dashboard_message = await channel.send(embed=embed, view=view)
+
     @commands.Cog.listener()
     async def on_message(self, message):
-        ROOM_HELP_ID = 1526498364932227092
-
-        # Cek apakah pesan dikirim di room khusus command-center
-        if message.channel.id == ROOM_HELP_ID:
-            # 1. Biarkan pesan dari bot itu sendiri (Menu Embed)
-            if message.author == self.bot.user:
+        # Auto delete semua pesan user di room help
+        if message.channel.id == self.ROOM_HELP_ID:
+            # Kecualikan pesan dashboard bot itu sendiri agar tidak terhapus
+            if self.dashboard_message and message.id == self.dashboard_message.id:
                 return
-            
-            # 2. Jika bukan dari bot (berarti dari user atau bot lain), LANGSUNG HAPUS!
-            # (Ini akan menghapus tulisan "!help" maupun ketikan spam yang panjang)
+                
             try:
                 await message.delete()
             except Exception:
                 pass
 
-    @commands.command()
-    @commands.cooldown(1, 3, commands.BucketType.channel) # Cooldown 3 detik per channel anti-spam
-    async def help(self, ctx):
-        ROOM_HELP_ID = 1526498364932227092
-        
-        # Jika user mengetik di room yang salah, bot tidak merespon
-        if ctx.channel.id != ROOM_HELP_ID:
-            return
-
-        # Jika ada menu help sebelumnya yang masih nangkring, hapus dulu agar bersih!
-        if self.active_msg:
-            try:
-                await self.active_msg.delete()
-            except Exception:
-                pass
-
-        # Buat dan kirim embed baru
-        embed = discord.Embed(
-            title="🛠️ Pusat Bantuan DekVee",
-            description="Pilih menu di bawah ini untuk melihat detail fitur dan cara menggunakannya!\n\n*(Pesan ini akan menghilang otomatis dalam 10 detik jika tidak digunakan)*",
-            color=discord.Color.dark_theme()
-        )
-        
-        view = HelpView()
-        msg = await ctx.send(embed=embed, view=view)
-        
-        # Simpan pesan baru ini ke memori bot
-        self.active_msg = msg
-        view.message = msg
-
-    # --- ERROR HANDLER UNTUK SPAM ---
-    @help.error
-    async def help_error(self, ctx, error):
-        # Jika user nge-spam command !help dan terkena cooldown, 
-        # bot akan diam saja tanpa mengirim error log.
-        if isinstance(error, commands.CommandOnCooldown):
-            pass
-
-# FUNGSI SETUP
 async def setup(bot):
     await bot.add_cog(HelpMenu(bot))
