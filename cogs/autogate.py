@@ -3,80 +3,18 @@ from discord.ext import commands
 import aiohttp
 import os
 import base64
-import asyncio
 
 # Ambil API key dari .env
 gemini_key = os.getenv("GEMINI_API_KEY")
 
 # ==========================================
-# 1. SISTEM TOMBOL WELCOME
-# ==========================================
-class WelcomeRoleView(discord.ui.View):
-    def __init__(self, target_member, bot):
-        super().__init__(timeout=None)
-        self.target_member = target_member
-        self.bot = bot
-        self.add_item(RoleButton("DKV", "DKV", "🎨", discord.ButtonStyle.primary))
-        self.add_item(RoleButton("Teknologi Informasi", "TEKINFO", "💻", discord.ButtonStyle.success))
-        self.add_item(RoleButton("Sistem Informasi", "SISFOR", "📊", discord.ButtonStyle.danger))
-        self.add_item(RoleButton("T. Telekomunikasi", "TEKTEL", "📡", discord.ButtonStyle.secondary))
-
-class RoleButton(discord.ui.Button):
-    def __init__(self, label, role_name, emoji, color):
-        super().__init__(label=label, style=color, emoji=emoji)
-        self.role_name = role_name
-
-    async def callback(self, interaction: discord.Interaction):
-        view: WelcomeRoleView = self.view
-        target_member = view.target_member
-        bot = view.bot
-
-        if interaction.user.id != target_member.id:
-            await interaction.response.send_message(f"⚠️ Eits, tombol ini khusus untuk {target_member.mention}!", ephemeral=True)
-            return
-
-        await interaction.response.defer(ephemeral=True)
-        role = discord.utils.get(interaction.guild.roles, name=self.role_name)
-
-        if not role:
-            await interaction.followup.send(f"⚠️ Role **{self.role_name}** belum dibuat di server!", ephemeral=True)
-            return
-
-        try:
-            await target_member.add_roles(role)
-        except discord.Forbidden:
-            await interaction.followup.send("❌ **GAGAL:** Bot tidak punya izin 'Manage Roles'.", ephemeral=True)
-            return
-
-        try:
-            await bot.pool.execute(
-                "INSERT INTO maba_roles (username, role_name) VALUES ($1, $2)",
-                target_member.name, self.role_name
-            )
-        except Exception as e:
-            print(f"[DB ERROR] Gagal input ke database: {e}")
-
-        await interaction.followup.send(f"🎉 Mantap! Kamu resmi masuk program studi **{self.role_name}**. Silakan cek private room kelasmu di sebelah kiri!", ephemeral=True)
-
-        try:
-            await interaction.message.delete()
-        except Exception:
-            pass
-
-
-# ==========================================
-# 2. SISTEM AUTO-GATE (DENGAN CONTOH SKL)
+# SISTEM AUTO-GATE (FULL OTOMATIS BACA PRODI)
 # ==========================================
 class AutoGate(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # MASUKKAN ID ROOM MASING-MASING DI SINI
+        # MASUKKAN ID ROOM POS SATPAM DI SINI
         self.pos_satpam_id = 1526900951678587013
-        self.welcome_center_id = 1526567698627035246
-        self.pengumuman_id = 1526219303714820186
-        
-        # Memory untuk mencatat siapa yang sudah pernah diperingatkan agar tidak spam
-        self.warned_users = set()
 
     async def panggil_gemini_api(self, prompt, image_data, mime_type):
         if not gemini_key:
@@ -85,7 +23,7 @@ class AutoGate(commands.Cog):
         clean_key = gemini_key.strip()
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={clean_key}"
         base64_image = base64.b64encode(image_data).decode('utf-8')
-
+        
         payload = {
             "contents": [{
                 "parts": [
@@ -100,17 +38,19 @@ class AutoGate(commands.Cog):
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
             ]
         }
-
+        
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload) as resp:
-                if resp.status != 200:
+                if resp.status != 200: 
                     raise Exception(f"API Error {resp.status}")
+                
                 data = await resp.json()
                 kandidat = data.get('candidates', [{}])[0]
-
+                
+                # Cek filter Google
                 if kandidat.get('finishReason') in ['PROHIBITED_CONTENT', 'SAFETY']:
                     return "KODE_BLOKIR_SENSOR"
-
+                
                 try:
                     return kandidat['content']['parts'][0]['text']
                 except KeyError:
@@ -121,126 +61,143 @@ class AutoGate(commands.Cog):
         if member.bot: return
         pos_satpam = self.bot.get_channel(self.pos_satpam_id)
         if pos_satpam:
-            pesan = await pos_satpam.send(
+            # Peringatan menetap dengan link contoh SKL
+            await pos_satpam.send(
                 f"🚨 **HALT!** Berhenti di situ, {member.mention}!\n\n"
                 f"Untuk masuk, **upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
-                f"⚠️ **PENTING:** Pastikan **Nama Lengkap, Program Studi (Prodi), Kampus Jakarta**, dan tahun **2026/2027** terlihat dengan jelas ya!\n\n"
-                f"📄 **Cek contoh SKL yang valid di sini:** https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing\n\n"
-                f"Ssst... ruangan ini cuma buat upload gambar, jadi dilarang chat. Langsung drop fotonya aja!"
+                f"⚠️ **PENTING:** Tolong **coret/sensor Nama Lengkap, Nomor Pendaftaran, dan Foto Wajahmu** agar aman.\n"
+                f"Pastikan teks **Kampus Jakarta**, tahun **2026/2027**, dan **Program Studi** kamu tetap terlihat jelas.\n\n"
+                f"📄 **Cek contoh SKL yang benar di sini:**\n"
+                f"https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing"
             )
-            await pesan.delete(delay=180)
 
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or message.channel.id != self.pos_satpam_id:
             return
-
-        # CEK APAKAH PESAN ADALAH GAMBAR YANG VALID
-        is_valid_image = False
-        attachment = None
+            
         if message.attachments:
             attachment = message.attachments[0]
             if any(attachment.filename.lower().endswith(ext) for ext in ['png', 'jpg', 'jpeg']):
-                is_valid_image = True
-
-        # JIKA BUKAN GAMBAR (CHAT BIASA ATAU FILE LAIN) -> HAPUS DAN PERINGATKAN SEKALI
-        if not is_valid_image:
-            try:
-                await message.delete()
-            except:
-                pass
-            
-            # Jika user belum pernah diperingatkan, berikan peringatan 1 kali
-            if message.author.id not in self.warned_users:
-                self.warned_users.add(message.author.id)
-                peringatan = await message.channel.send(
-                    f"⚠️ **Tahan {message.author.mention}!** Ruangan ini khusus buat **upload foto SKL** (jpg/png). Tolong jangan ngirim chat di mari ya.\n"
-                    f"👉 **Bingung bentuk SKL-nya? Cek contohnya di sini:** https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing"
-                )
-                await peringatan.delete(delay=15)
-            return
-
-        # JIKA GAMBAR VALID, LANJUTKAN PROSES
-        await message.add_reaction("⏳")
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(attachment.url) as resp:
-                    if resp.status != 200: return
-                    image_data = await resp.read()
-
-            nama_depan = message.author.display_name.split()[0]
-            prompt = "Salin dan ketik ulang seluruh teks yang bisa kamu baca di gambar ini. Jangan berikan penjelasan apapun."
-            hasil_mentah = await self.panggil_gemini_api(prompt, image_data, attachment.content_type)
-
-            if "KODE_BLOKIR_SENSOR" in hasil_mentah:
-                tolak_msg = await message.channel.send(
-                    f"❌ **Waduh {nama_depan}, sistem Google pusing baca dokumenmu!** {message.author.mention}\n"
-                    "**SOLUSI:** Pastikan foto nggak blur dan teks **Nama, Prodi, Kampus, & Tahun** kelihatan jelas. Coba upload ulang gambarnya!"
-                )
-                await tolak_msg.delete(delay=30)
-            else:
-                teks = hasil_mentah.lower()
-                syarat_kampus = "jakarta" in teks or "telkom university" in teks
-                syarat_tahun = "2026" in teks
                 
-                prodi_list = ["dkv", "desain komunikasi visual", "teknologi informasi", "tekinfo", "sistem informasi", "sisfor", "telekomunikasi", "tektel"]
-                syarat_prodi = any(p in teks for p in prodi_list)
-
-                if syarat_kampus and syarat_tahun and syarat_prodi:
-                    # 1. Kirim pesan sukses di Pos Satpam TERLEBIH DAHULU
-                    acc_msg = await message.channel.send(
-                        f"✅ **Verifikasi Berhasil!** Halo **{nama_depan}** {message.author.mention}, akses kampus lu udah dibuka. Cuss cek room welcome-center!"
-                    )
-                    await acc_msg.delete(delay=10)
-
-                    # Beri jeda 5 detik agar pesan terbaca sebelum ruangan menghilang
-                    await asyncio.sleep(5)
-
-                    # 2. Berikan role MEMBER
-                    role_member = discord.utils.get(message.guild.roles, name="MEMBER")
-                    if role_member: await message.author.add_roles(role_member)
-
-                    # 3. Sapaan ke Welcome Center
-                    welcome_channel = self.bot.get_channel(self.welcome_center_id)
-                    if welcome_channel:
-                        embed = discord.Embed(
-                            title="🎓 Welcome to Telyu Jekardah!",
-                            description=(
-                                f"Helo welkam join Telyu Jekardah, kak **{nama_depan}**! {message.author.mention}\n\n"
-                                "Berkas SKL kamu udah aman. Sebelum mulai berpetualang dan mabar, kamu **wajib milih program studi dulu nih.**\n\n"
-                                "👉 **Silakan pilih satu role jurusan di bawah!**"
-                            ),
-                            color=discord.Color.blue()
-                        )
-                        embed.set_thumbnail(url=message.author.display_avatar.url)
-                        view = WelcomeRoleView(target_member=message.author, bot=self.bot)
-                        await welcome_channel.send(content=f"Cek di mari ngab **{nama_depan}**!", embed=embed, view=view)
+                # ========================================================
+                # CEGAT ORANG YANG SUDAH LOLOS
+                # ========================================================
+                role_member = discord.utils.get(message.guild.roles, name="MEMBER")
+                if role_member and role_member in message.author.roles:
+                    try: await message.delete()
+                    except: pass
                     
-                    # 4. Umumkan ke Room Chat Universal dengan Foto Profil
-                    pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
-                    if pengumuman_channel:
-                        embed_pengumuman = discord.Embed(
-                            title="🎉 MAHASISWA BARU TELAH TIBA!",
-                            description=f"Mari sambut **{nama_depan}** ({message.author.mention}) yang baru aja lolos verifikasi gerbang utama!\nSelamat bergabung di kampus, jangan lupa mampir ke kantin virtual!",
-                            color=discord.Color.gold()
-                        )
-                        embed_pengumuman.set_thumbnail(url=message.author.display_avatar.url)
-                        
-                        await pengumuman_channel.send(embed=embed_pengumuman)
-
-                else:
-                    tolak_msg = await message.channel.send(
-                        f"❌ **Verifikasi Gagal, {nama_depan}** {message.author.mention}.\n"
-                        f"Dokumen lu kurang lengkap nih! Pastikan **Nama, Prodi, Kampus Jakarta, dan Tahun 2026/2027** benar-benar kelihatan di fotonya. Silakan upload ulang atau panggil Admin.\n"
-                        f"📄 **Cek contoh SKL yang bener di sini:** https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing"
+                    peringatan = await message.channel.send(
+                        f"Eits {message.author.mention}, kamu kan udah lolos verifikasi! Nggak perlu upload SKL lagi ya. 😅"
                     )
-                    await tolak_msg.delete(delay=15)
+                    await peringatan.delete(delay=10)
+                    return 
 
-        except Exception as e:
-            await message.channel.send(f"⚠️ Waduh, sistem pusing: {e}")
-        finally:
-            try: await message.delete()
-            except: pass
+                # ========================================================
+                # PENYAPU OTOMATIS: Menghapus "HALT!" dan Peringatan Gagal sebelumnya
+                # ========================================================
+                async for msg in message.channel.history(limit=50):
+                    if msg.author == self.bot.user and message.author.mention in msg.content:
+                        try:
+                            await msg.delete()
+                        except:
+                            pass
+                # ========================================================
+
+                await message.add_reaction("⏳")
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(attachment.url) as resp:
+                            if resp.status != 200: return
+                            image_data = await resp.read()
+
+                    # HAPUS FOTO SECARA INSTAN SETELAH DI-DOWNLOAD BOT
+                    try:
+                        await message.delete()
+                    except:
+                        pass
+
+                    nama_depan = message.author.display_name.split()[0]
+                    
+                    # PROMPT BARU: AI disuruh mendeteksi keaslian visual dokumen
+                    prompt = (
+                        "Perhatikan gambar ini baik-baik.\n"
+                        "1. Jika gambar ini secara visual BUKAN potongan surat resmi, atau hanya berupa teks/ketikan biasa di layar polos, balas HANYA dengan kata 'PALSU'.\n"
+                        "2. Jika gambar ini terlihat seperti dokumen, surat, atau pengumuman kampus asli, salin dan ketik ulang seluruh teksnya tanpa penjelasan apapun."
+                    )
+                    
+                    hasil_mentah = await self.panggil_gemini_api(prompt, image_data, attachment.content_type)
+                    
+                    # PENANGANAN HASIL AI
+                    if "KODE_BLOKIR_SENSOR" in hasil_mentah:
+                        await message.channel.send(
+                            f"❌ **Waduh {nama_depan}, sistem Google menolak membaca dokumenmu!** {message.author.mention}\n"
+                            "👉 **SOLUSI:** Sensor bagian Nama Lengkap, Nomor Pendaftaran, dan Foto Wajah. Jika masih gagal, crop gambar agar fokus ke teks Kampus, Tahun, dan Prodi saja."
+                        )
+                        
+                    elif "PALSU" in hasil_mentah.upper():
+                        await message.channel.send(
+                            f"🚨 **Waduh {nama_depan}, ketahuan nih!** {message.author.mention}\n"
+                            "Sistem AI mendeteksi gambar yang kamu kirim bukan dokumen/surat resmi. Tolong upload foto SKL yang asli ya!"
+                        )
+                        
+                    else:
+                        # Logika Python (Bukan AI) yang menentukan Lolos & Jurusannya
+                        teks = hasil_mentah.lower()
+                        
+                        # 1. Cek Kampus & Tahun
+                        syarat_kampus = "jakarta" in teks or "telkom university" in teks
+                        syarat_tahun = "2026" in teks
+                        
+                        # 2. Cek Jurusan (Prodi)
+                        prodi_terdeteksi = None
+                        if "desain komunikasi visual" in teks or "dkv" in teks:
+                            prodi_terdeteksi = "DKV"
+                        elif "teknologi informasi" in teks or "tekinfo" in teks:
+                            prodi_terdeteksi = "TEKINFO"
+                        elif "sistem informasi" in teks or "sisfor" in teks:
+                            prodi_terdeteksi = "SISFOR"
+                        elif "teknik telekomunikasi" in teks or "telekomunikasi" in teks or "tektel" in teks:
+                            prodi_terdeteksi = "TEKTEL"
+
+                        # 3. Eksekusi Hasil
+                        if syarat_kampus and syarat_tahun and prodi_terdeteksi:
+                            
+                            # Berikan Role MEMBER
+                            role_member = discord.utils.get(message.guild.roles, name="MEMBER")
+                            if role_member: await message.author.add_roles(role_member)
+                                
+                            # Berikan Role JURUSAN
+                            role_prodi = discord.utils.get(message.guild.roles, name=prodi_terdeteksi)
+                            if role_prodi: await message.author.add_roles(role_prodi)
+
+                            # Masukkan ke Database Maba
+                            try:
+                                await self.bot.pool.execute(
+                                    "INSERT INTO maba_roles (username, role_name) VALUES ($1, $2)",
+                                    message.author.name, prodi_terdeteksi
+                                )
+                            except Exception as e:
+                                print(f"[DB ERROR] Gagal input ke database: {e}")
+
+                            # Pesan sukses hilang dalam 10 detik
+                            acc_msg = await message.channel.send(
+                                f"✅ **Verifikasi Berhasil!** Halo **{nama_depan}** {message.author.mention}, kamu resmi masuk program studi **{prodi_terdeteksi}**! Silakan cek private room kelasmu di sebelah kiri!"
+                            )
+                            await acc_msg.delete(delay=10)
+                        else:
+                            # Peringatan gagal tidak dihapus otomatis (hilang saat maba upload foto baru)
+                            await message.channel.send(
+                                f"❌ **Gagal {nama_depan}** {message.author.mention}. Pastikan nama kampus, tahun 2026/2027, dan **Nama Program Studi** terbaca jelas di fotomu!"
+                            )
+                            
+                except Exception as e:
+                    await message.channel.send(f"⚠️ Waduh, sistem pusing {message.author.mention}: {e}")
+                finally:
+                    # Fallback pengaman
+                    try: await message.delete()
+                    except: pass
 
 async def setup(bot):
     await bot.add_cog(AutoGate(bot))
