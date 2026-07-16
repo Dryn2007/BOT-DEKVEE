@@ -55,65 +55,76 @@ class HelpDropdown(discord.ui.Select):
             )
             return
 
-        # 2. KUNCI DASHBOARD UNTUK USER INI & RESTART TIMER
-        view.locked_user = interaction.user.id
-        view.start_timer()
-
-        # >>> HITUNG TIMESTAMP KAPAN MENU AKAN TERTUTUP <<<
-        expire_dt = discord.utils.utcnow() + timedelta(seconds=20)
-        view.expire_ts = int(expire_dt.timestamp())
-
-        # 3. TENTUKAN ISI PESAN
-        val = self.values[0]
-        embed = discord.Embed()
-
-        if val == "Leveling & Rank":
-            embed = discord.Embed(
-                title="🏆 Panduan Leveling & Rank",
-                description="Bot menggunakan sistem Hybrid! Kamu dapat XP dari Chat (2 XP) dan dari VC (1 XP / 2 Menit).",
-                color=discord.Color.gold()
-            )
-            embed.add_field(name="`!rank`", value="Melihat profil level, rank Hunter, dan progress bar XP kamu saat ini.", inline=False)
-            embed.add_field(name="`!leaderboard`", value="Melihat 10 Hunter dengan level dan XP tertinggi di server.", inline=False)
-
-        elif val == "Voice Log":
-            embed = discord.Embed(
-                title="🔊 Panduan Voice Log",
-                description="Bot mencatat berapa lama kamu nongkrong di Voice Channel secara permanen.",
-                color=discord.Color.blue()
-            )
-            embed.add_field(name="`!vclog`", value="Menampilkan total statistik durasi seluruh member di VC untuk hari ini.", inline=False)
-            embed.add_field(name="`!vclog history`", value="Menampilkan menu untuk melihat data durasi VC pada tanggal/hari sebelumnya.", inline=False)
-
-        elif val == "Admin Menu":
-            embed = discord.Embed(
-                title="👑 Panduan Admin Menu",
-                description="Command khusus yang hanya bisa diakses oleh petinggi server.",
-                color=discord.Color.red()
-            )
-            embed.add_field(name="`!clear`", value="**Akses:** Owner Bot\n**Fungsi:** Menghapus (purge) pesan di channel (default 5, max 100).", inline=False)
-            embed.add_field(name="`!spawnstats`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memaksa dashboard statistik muncul ulang.", inline=False)
-            embed.add_field(name="`!testxp <jumlah>`", value="**Akses:** Administrator\n**Fungsi:** Mode testing untuk suntik XP ke akun sendiri secara instan.", inline=False)
-            embed.add_field(name="`!spawnhelp`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memunculkan ulang dashboard help secara paksa.", inline=False)
-
-        # >>> TAMBAHKAN COUNTDOWN KE EMBED <<<
-        embed.add_field(
-            name="⏳ Sesi Ditutup",
-            value=f"Menu ini akan otomatis tertutup <t:{view.expire_ts}:R>\n(atau klik **Selesai Membaca** jika sudah selesai)",
-            inline=False
-        )
-
-        # 4. UBAH STATUS UI
-        self.placeholder = f"Sedang melihat: {val}"
-        view.done_button.disabled = False
-
-        await interaction.response.edit_message(embed=embed, view=view)
-
-        # Sinkronkan referensi pesan (backup, kalau-kalau view.message belum ke-set)
         try:
-            view.cog.dashboard_message = await interaction.original_response()
+            # 2. KUNCI DASHBOARD UNTUK USER INI & RESTART TIMER
+            view.locked_user = interaction.user.id
+            view.start_timer()
+
+            # >>> HITUNG TIMESTAMP KAPAN MENU AKAN TERTUTUP <<<
+            expire_dt = discord.utils.utcnow() + timedelta(seconds=20)
+            view.expire_ts = int(expire_dt.timestamp())
+
+            # 3. TENTUKAN ISI PESAN
+            val = self.values[0]
+            embed = discord.Embed()
+
+            if val == "Leveling & Rank":
+                embed = discord.Embed(
+                    title="🏆 Panduan Leveling & Rank",
+                    description="Bot menggunakan sistem Hybrid! Kamu dapat XP dari Chat (2 XP) dan dari VC (1 XP / 2 Menit).",
+                    color=discord.Color.gold()
+                )
+                embed.add_field(name="`!rank`", value="Melihat profil level, rank Hunter, dan progress bar XP kamu saat ini.", inline=False)
+                embed.add_field(name="`!leaderboard`", value="Melihat 10 Hunter dengan level dan XP tertinggi di server.", inline=False)
+
+            elif val == "Voice Log":
+                embed = discord.Embed(
+                    title="🔊 Panduan Voice Log",
+                    description="Bot mencatat berapa lama kamu nongkrong di Voice Channel secara permanen.",
+                    color=discord.Color.blue()
+                )
+                embed.add_field(name="`!vclog`", value="Menampilkan total statistik durasi seluruh member di VC untuk hari ini.", inline=False)
+                embed.add_field(name="`!vclog history`", value="Menampilkan menu untuk melihat data durasi VC pada tanggal/hari sebelumnya.", inline=False)
+
+            elif val == "Admin Menu":
+                embed = discord.Embed(
+                    title="👑 Panduan Admin Menu",
+                    description="Command khusus yang hanya bisa diakses oleh petinggi server.",
+                    color=discord.Color.red()
+                )
+                embed.add_field(name="`!clear`", value="**Akses:** Owner Bot\n**Fungsi:** Menghapus (purge) pesan di channel (default 5, max 100).", inline=False)
+                embed.add_field(name="`!spawnstats`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memaksa dashboard statistik muncul ulang.", inline=False)
+                embed.add_field(name="`!testxp <jumlah>`", value="**Akses:** Administrator\n**Fungsi:** Mode testing untuk suntik XP ke akun sendiri secara instan.", inline=False)
+                embed.add_field(name="`!spawnhelp`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memunculkan ulang dashboard help secara paksa.", inline=False)
+
+            # >>> TAMBAHKAN COUNTDOWN KE EMBED <<<
+            embed.add_field(
+                name="⏳ Sesi Ditutup",
+                value=f"Menu ini akan otomatis tertutup <t:{view.expire_ts}:R>\n(atau klik **Selesai Membaca** jika sudah selesai)",
+                inline=False
+            )
+
+            # 4. UBAH STATUS UI
+            self.placeholder = f"Sedang melihat: {val}"
+            view.done_button.disabled = False
+
+            await interaction.response.edit_message(embed=embed, view=view)
+
+            # Sinkronkan referensi pesan (backup, kalau-kalau view.message belum ke-set)
+            try:
+                view.cog.dashboard_message = await interaction.original_response()
+            except Exception as e:
+                print(f"[HelpDropdown] Gagal sinkronisasi pesan: {e!r}")
+
         except Exception as e:
-            print(f"[HelpDropdown] Gagal sinkronisasi pesan: {e!r}")
+            print(f"[HelpDropdown callback] GAGAL untuk user {interaction.user} (id={interaction.user.id}): {e!r}")
+            traceback.print_exc()
+            # Lock dilepas paksa supaya user lain tidak ikut ketahan
+            view.locked_user = None
+            view.expire_ts = None
+            if view.timeout_task:
+                view.timeout_task.cancel()
+                view.timeout_task = None
 
 
 class DoneButton(discord.ui.Button):
@@ -180,8 +191,6 @@ class HelpDashboardView(discord.ui.View):
         # PERBAIKAN UTAMA:
         # Jangan langsung set locked_user/expire_ts = None di awal.
         # Reset itu HANYA dilakukan SETELAH kita tahu proses edit pesan berhasil.
-        # Kalau edit gagal duluan direset, user yang lagi "megang" kunci jadi
-        # kehilangan hak klik "Selesai Membaca" padahal tampilannya masih macet.
 
         self.dropdown.placeholder = "Pilih fitur yang ingin dilihat..."
         self.done_button.disabled = True
@@ -233,8 +242,6 @@ class HelpDashboardView(discord.ui.View):
             print("[reset_dashboard] Tidak ada referensi pesan sama sekali untuk di-reset!")
 
         # Baru reset lock & timer SETELAH tahu hasil edit-nya.
-        # Kalau ini timer otomatis (interaction=None) tetap reset lock walau edit gagal,
-        # supaya sistem tidak macet permanen menunggu edit yang mungkin terus gagal.
         if success or interaction is None:
             self.locked_user = None
             self.expire_ts = None
