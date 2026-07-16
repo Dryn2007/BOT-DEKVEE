@@ -2,8 +2,9 @@ import discord
 from discord.ext import commands
 import asyncio
 import traceback
+import time  # Ditambahkan untuk sistem hitungan mundur live
 
-# >>> CLASS BARU UNTUK TOMBOL "OK" DI PESAN PERINGATAN <<<
+# >>> CLASS UNTUK TOMBOL "OK" DI PESAN PERINGATAN <<<
 class WarningView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=10.0)
@@ -11,7 +12,6 @@ class WarningView(discord.ui.View):
     @discord.ui.button(label="OK Paham", style=discord.ButtonStyle.secondary, emoji="👍")
     async def ok_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         try:
-            # Hapus pesan peringatan saat tombol OK diklik
             await interaction.message.delete()
         except Exception:
             pass
@@ -42,13 +42,13 @@ class HelpDropdown(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         view = self.parent_view
         
-        # 1. CEK SISTEM ANTREAN / LOCKING
+        # 1. CEK SISTEM ANTREAN / LOCKING (Kini dengan hitungan mundur live)
         if view.locked_user is not None and view.locked_user != interaction.user.id:
             await interaction.response.send_message(
-                "⚠️ **Mohon tunggu!** Menu bantuan sedang digunakan oleh user lain. Tunggu gilirannya ya.", 
+                f"⚠️ **Mohon tunggu!** Menu bantuan sedang digunakan oleh user lain. Giliranmu akan tiba <t:{view.end_time}:R>.", 
                 ephemeral=True,
-                view=WarningView(),   # Memunculkan tombol OK
-                delete_after=10.0     # Otomatis hilang dalam 10 detik
+                view=WarningView(),
+                delete_after=10.0
             )
             return
             
@@ -89,6 +89,9 @@ class HelpDropdown(discord.ui.Select):
             embed.add_field(name="`!testxp <jumlah>`", value="**Akses:** Administrator\n**Fungsi:** Mode testing untuk suntik XP ke akun sendiri secara instan.", inline=False)
             embed.add_field(name="`!spawnhelp`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memunculkan ulang dashboard help secara paksa.", inline=False)
 
+        # Tambahkan teks hitungan mundur live di deskripsi embed
+        embed.description += f"\n\n⏳ *(Menu ini akan otomatis ditutup <t:{view.end_time}:R>)*"
+
         # 4. UBAH STATUS UI
         self.placeholder = f"Sedang melihat: {val}"
         view.done_button.disabled = False # Nyalakan tombol Selesai
@@ -107,8 +110,8 @@ class DoneButton(discord.ui.Button):
             await interaction.response.send_message(
                 "⚠️ Hanya user yang sedang membaca yang bisa ngeklik ini.", 
                 ephemeral=True,
-                view=WarningView(),   # Memunculkan tombol OK
-                delete_after=10.0     # Otomatis hilang dalam 10 detik
+                view=WarningView(),
+                delete_after=10.0
             )
             return
             
@@ -122,6 +125,7 @@ class HelpDashboardView(discord.ui.View):
         self.cog = cog
         self.locked_user = None
         self.timeout_task = None
+        self.end_time = None # Variabel untuk menyimpan target waktu selesai
         
         # Masukkan UI ke dalam view
         self.dropdown = HelpDropdown(self)
@@ -146,6 +150,9 @@ class HelpDashboardView(discord.ui.View):
     def start_timer(self):
         if self.timeout_task:
             self.timeout_task.cancel()
+        
+        # Set target waktu berakhir (Waktu sekarang + 20 detik)
+        self.end_time = int(time.time()) + 20 
         self.timeout_task = self.cog.bot.loop.create_task(self.timer_logic())
 
     async def timer_logic(self):
@@ -154,6 +161,7 @@ class HelpDashboardView(discord.ui.View):
 
     async def reset_dashboard(self, interaction=None):
         self.locked_user = None
+        self.end_time = None
         if self.timeout_task:
             self.timeout_task.cancel()
             self.timeout_task = None
