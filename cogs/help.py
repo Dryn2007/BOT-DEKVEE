@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 import asyncio
 import traceback
-import time
+from datetime import timedelta
 
 # >>> CLASS UNTUK TOMBOL "OK" DI PESAN PERINGATAN <<<
 class WarningView(discord.ui.View):
@@ -48,7 +48,7 @@ class HelpDropdown(discord.ui.Select):
         # 1. CEK SISTEM ANTREAN / LOCKING
         if view.locked_user is not None and view.locked_user != interaction.user.id:
             await interaction.response.send_message(
-                f"⚠️ **Mohon tunggu!** Menu bantuan sedang digunakan oleh user lain. Giliranmu akan tiba <t:{view.end_time}:R>.", 
+                f"⚠️ **Mohon tunggu!** Menu bantuan sedang digunakan oleh user lain. Giliranmu akan tiba <t:{view.expire_ts}:R>.", 
                 ephemeral=True,
                 view=WarningView(),
                 delete_after=10.0
@@ -58,6 +58,10 @@ class HelpDropdown(discord.ui.Select):
         # 2. KUNCI DASHBOARD UNTUK USER INI & RESTART TIMER
         view.locked_user = interaction.user.id
         view.start_timer()
+
+        # >>> HITUNG TIMESTAMP KAPAN MENU AKAN TERTUTUP <<<
+        expire_dt = discord.utils.utcnow() + timedelta(seconds=20)
+        view.expire_ts = int(expire_dt.timestamp())
         
         # 3. TENTUKAN ISI PESAN
         val = self.values[0]
@@ -92,7 +96,12 @@ class HelpDropdown(discord.ui.Select):
             embed.add_field(name="`!testxp <jumlah>`", value="**Akses:** Administrator\n**Fungsi:** Mode testing untuk suntik XP ke akun sendiri secara instan.", inline=False)
             embed.add_field(name="`!spawnhelp`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memunculkan ulang dashboard help secara paksa.", inline=False)
 
-        embed.description += f"\n\n⏳ *(Menu ini akan otomatis ditutup <t:{view.end_time}:R>)*"
+        # >>> TAMBAHKAN COUNTDOWN KE EMBED <<<
+        embed.add_field(
+            name="⏳ Sesi Ditutup",
+            value=f"Menu ini akan otomatis tertutup <t:{view.expire_ts}:R>\n(atau klik **Selesai Membaca** jika sudah selesai)",
+            inline=False
+        )
 
         # 4. UBAH STATUS UI
         self.placeholder = f"Sedang melihat: {val}"
@@ -108,7 +117,7 @@ class DoneButton(discord.ui.Button):
         
     async def callback(self, interaction: discord.Interaction):
         view = self.parent_view
-        view.message = interaction.message # IKAT PESAN KE MEMORI
+        view.message = interaction.message 
         
         if view.locked_user != interaction.user.id:
             await interaction.response.send_message(
@@ -128,8 +137,8 @@ class HelpDashboardView(discord.ui.View):
         self.cog = cog
         self.locked_user = None
         self.timeout_task = None
-        self.end_time = None 
-        self.message = None # REFERENSI OBJEK PESAN
+        self.expire_ts = None   # <<< TAMBAHAN DARI CLAUDE
+        self.message = None 
         
         self.dropdown = HelpDropdown(self)
         self.done_button = DoneButton(self)
@@ -153,8 +162,6 @@ class HelpDashboardView(discord.ui.View):
     def start_timer(self):
         if self.timeout_task:
             self.timeout_task.cancel()
-        
-        self.end_time = int(time.time()) + 20 
         self.timeout_task = self.cog.bot.loop.create_task(self.timer_logic())
 
     async def timer_logic(self):
@@ -163,7 +170,7 @@ class HelpDashboardView(discord.ui.View):
 
     async def reset_dashboard(self, interaction=None):
         self.locked_user = None
-        self.end_time = None
+        self.expire_ts = None   # <<< TAMBAHAN DARI CLAUDE
         if self.timeout_task:
             self.timeout_task.cancel()
             self.timeout_task = None
@@ -177,7 +184,6 @@ class HelpDashboardView(discord.ui.View):
             color=discord.Color.dark_theme()
         )
         
-        # Eksekusi Reset Pesan dengan aman
         if interaction:
             try:
                 await interaction.response.edit_message(embed=embed, view=self)
@@ -230,7 +236,6 @@ class HelpMenu(commands.Cog):
         
         view = HelpDashboardView(self)
         self.dashboard_message = await channel.send(embed=embed, view=view)
-        # IKAT PESAN PERTAMA KALI SAAT DIBUAT
         view.message = self.dashboard_message 
 
     @commands.command()
