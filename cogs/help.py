@@ -42,11 +42,9 @@ class HelpDropdown(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         view = self.parent_view
-
-        # IKAT PESAN KE MEMORI VIEW AGAR TIDAK HILANG SAAT RESET
         view.message = interaction.message
 
-        # 1. CEK SISTEM ANTREAN / LOCKING (Peringatan Lebih Kontras & Tegas)
+        # 1. CEK SISTEM ANTREAN / LOCKING
         if view.locked_user is not None and view.locked_user != interaction.user.id:
             alert_embed = discord.Embed(
                 title="⛔ SISTEM SIBUK!",
@@ -62,11 +60,10 @@ class HelpDropdown(discord.ui.Select):
             return
 
         try:
-            # 2. KUNCI DASHBOARD UNTUK USER INI & RESTART TIMER
+            # 2. KUNCI DASHBOARD & RESTART TIMER
             view.locked_user = interaction.user.id
             view.start_timer()
 
-            # >>> HITUNG TIMESTAMP KAPAN MENU AKAN TERTUTUP <<<
             expire_dt = discord.utils.utcnow() + timedelta(seconds=20)
             view.expire_ts = int(expire_dt.timestamp())
 
@@ -103,33 +100,32 @@ class HelpDropdown(discord.ui.Select):
                 embed.add_field(name="`!testxp <jumlah>`", value="**Akses:** Administrator\n**Fungsi:** Mode testing untuk suntik XP ke akun sendiri secara instan.", inline=False)
                 embed.add_field(name="`!spawnhelp`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memunculkan ulang dashboard help secara paksa.", inline=False)
 
-            # >>> COUNTDOWN INI HANYA TAMPIL UNTUK PEMEGANG LOCK <<<
-            embed.add_field(
-                name="⏳ Sesi Ditutup",
-                value=f"Menu ini akan otomatis tertutup <t:{view.expire_ts}:R>\n(atau klik **Selesai Membaca** jika sudah selesai)",
-                inline=False
-            )
+            # >>> SOLUSI BUG HP: Waktu dimasukkan ke description agar tidak stuck <<<
+            embed.description += f"\n\n⏳ *(Menu ini akan otomatis tertutup <t:{view.expire_ts}:R>)*"
 
             # 4. UBAH STATUS UI
             self.placeholder = f"Sedang melihat: {val}"
             
-            # MUNCULKAN TOMBOL "SELESAI MEMBACA" (karena user sudah ngeklik list)
+            # MATIKAN DROPDOWN AGAR MEMBER LAIN TIDAK BISA KLIK
+            self.disabled = True 
+            
+            # MUNCULKAN TOMBOL SELESAI
             view.done_button.disabled = False
             if view.done_button not in view.children:
                 view.add_item(view.done_button)
 
-            await interaction.response.edit_message(embed=embed, view=view)
+            teks_status = f"🔒 **Sedang dibaca oleh {interaction.user.mention}**"
 
-            # Sinkronkan referensi pesan (backup, kalau-kalau view.message belum ke-set)
+            await interaction.response.edit_message(content=teks_status, embed=embed, view=view)
+
             try:
                 view.cog.dashboard_message = await interaction.original_response()
             except Exception as e:
                 print(f"[HelpDropdown] Gagal sinkronisasi pesan: {e!r}")
 
         except Exception as e:
-            print(f"[HelpDropdown callback] GAGAL untuk user {interaction.user} (id={interaction.user.id}): {e!r}")
+            print(f"[HelpDropdown callback] GAGAL untuk user {interaction.user}: {e!r}")
             traceback.print_exc()
-            # Lock dilepas paksa supaya user lain tidak ikut ketahan
             view.locked_user = None
             view.expire_ts = None
             view.cancel_timer()
@@ -138,7 +134,8 @@ class HelpDropdown(discord.ui.Select):
 class DoneButton(discord.ui.Button):
     def __init__(self, parent_view):
         self.parent_view = parent_view
-        super().__init__(label="Selesai Membaca", style=discord.ButtonStyle.success, emoji="✅", disabled=False)
+        # WARNA TOMBOL DIUBAH MENJADI MERAH DAN TEKSNYA DIPERJELAS
+        super().__init__(label="Selesai (Sedang Digunakan)", style=discord.ButtonStyle.danger, emoji="🛑", disabled=False)
 
     async def callback(self, interaction: discord.Interaction):
         view = self.parent_view
@@ -147,7 +144,7 @@ class DoneButton(discord.ui.Button):
         if view.locked_user is not None and view.locked_user != interaction.user.id:
             alert_embed = discord.Embed(
                 title="⛔ AKSES DITOLAK!",
-                description="Tombol ini hanya bisa ditekan oleh user yang sedang membaca menu saat ini.",
+                description="Tombol ini hanya bisa ditekan oleh user yang sedang membaca menu saat ini.\nSilakan tunggu gilirannya!",
                 color=discord.Color.red()
             )
             await interaction.response.send_message(
@@ -173,8 +170,6 @@ class HelpDashboardView(discord.ui.View):
         self.dropdown = HelpDropdown(self)
         self.done_button = DoneButton(self)
         self.add_item(self.dropdown)
-        # HAPUS BARIS INI (Tombol 'Selesai' jangan dimasukkan di awal)
-        # self.add_item(self.done_button) 
 
     async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item):
         print(f"\n[HelpDashboardView ERROR] item={item} user={interaction.user} error={error!r}")
@@ -182,7 +177,7 @@ class HelpDashboardView(discord.ui.View):
         if not interaction.response.is_done():
             try:
                 await interaction.response.send_message(
-                    "❌ Terjadi kesalahan internal saat memuat menu. Coba lagi beberapa saat atau hubungi Admin.",
+                    "❌ Terjadi kesalahan internal saat memuat menu.",
                     ephemeral=True,
                     view=WarningView(),
                     delete_after=10.0
@@ -195,7 +190,6 @@ class HelpDashboardView(discord.ui.View):
         self.timeout_task = self.cog.bot.loop.create_task(self.timer_logic())
 
     def cancel_timer(self):
-        """Batalkan timer dengan aman, hindari sebuah task membatalkan dirinya sendiri."""
         current = asyncio.current_task()
         if self.timeout_task and self.timeout_task is not current:
             self.timeout_task.cancel()
@@ -211,7 +205,10 @@ class HelpDashboardView(discord.ui.View):
     async def reset_dashboard(self, interaction=None):
         self.dropdown.placeholder = "Pilih fitur yang ingin dilihat..."
         
-        # SEMBUNYIKAN TOMBOL "SELESAI MEMBACA" KEMBALI
+        # NYALAKAN KEMBALI DROPDOWN UNTUK UMUM
+        self.dropdown.disabled = False 
+        
+        # HAPUS TOMBOL SELESAI DARI LAYAR
         if self.done_button in self.children:
             self.remove_item(self.done_button)
 
@@ -225,21 +222,20 @@ class HelpDashboardView(discord.ui.View):
 
         if interaction:
             try:
-                await interaction.response.edit_message(embed=embed, view=self)
+                await interaction.response.edit_message(content=None, embed=embed, view=self)
                 success = True
             except Exception as e:
                 print(f"[reset_dashboard via interaction] ERROR: {e!r}")
                 traceback.print_exc()
                 if self.message:
                     try:
-                        await self.message.edit(embed=embed, view=self)
+                        await self.message.edit(content=None, embed=embed, view=self)
                         success = True
                     except Exception as e2:
-                        print(f"[reset_dashboard fallback via self.message] ERROR: {e2!r}")
                         traceback.print_exc()
         elif self.message:
             try:
-                await self.message.edit(embed=embed, view=self)
+                await self.message.edit(content=None, embed=embed, view=self)
                 success = True
             except Exception as e:
                 print(f"[reset_dashboard via self.message] ERROR: {e!r}")
@@ -249,28 +245,21 @@ class HelpDashboardView(discord.ui.View):
                     if channel is None:
                         channel = await self.cog.bot.fetch_channel(self.cog.ROOM_HELP_ID)
                     fresh_msg = await channel.fetch_message(self.message.id)
-                    await fresh_msg.edit(embed=embed, view=self)
+                    await fresh_msg.edit(content=None, embed=embed, view=self)
                     self.message = fresh_msg
                     self.cog.dashboard_message = fresh_msg
                     success = True
                 except Exception as e2:
-                    print(f"[reset_dashboard retry via self.message] ERROR: {e2!r}")
                     traceback.print_exc()
         elif self.cog.dashboard_message:
             try:
-                await self.cog.dashboard_message.edit(embed=embed, view=self)
+                await self.cog.dashboard_message.edit(content=None, embed=embed, view=self)
                 self.message = self.cog.dashboard_message
                 success = True
             except Exception as e:
                 print(f"[reset_dashboard via cog.dashboard_message] ERROR: {e!r}")
                 traceback.print_exc()
-        else:
-            print("[reset_dashboard] Tidak ada referensi pesan sama sekali untuk di-reset!")
 
-        if not success:
-            print("[reset_dashboard] WARNING: gagal update tampilan, tapi lock tetap dilepas paksa.")
-
-        # >>> PERBAIKAN UTAMA: lock & timer SELALU dilepas, apapun hasil edit-nya. <<<
         self.locked_user = None
         self.expire_ts = None
         self.cancel_timer()
@@ -304,7 +293,6 @@ class HelpMenu(commands.Cog):
         try:
             await channel.purge(limit=100)
         except Exception as e:
-            print(f"[spawn_dashboard] Gagal purge channel: {e!r}")
             traceback.print_exc()
 
         embed = discord.Embed(
