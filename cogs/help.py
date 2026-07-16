@@ -70,6 +70,7 @@ class HelpDropdown(discord.ui.Select):
             embed.add_field(name="`!clear`", value="**Akses:** Owner Bot\n**Fungsi:** Menghapus (purge) pesan di channel (default 5, max 100).", inline=False)
             embed.add_field(name="`!spawnstats`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memaksa dashboard statistik muncul ulang.", inline=False)
             embed.add_field(name="`!testxp <jumlah>`", value="**Akses:** Administrator\n**Fungsi:** Mode testing untuk suntik XP ke akun sendiri secara instan.", inline=False)
+            embed.add_field(name="`!spawnhelp`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memunculkan ulang dashboard help secara paksa.", inline=False)
 
         self.placeholder = f"Sedang melihat: {val}"
 
@@ -143,19 +144,26 @@ class HelpMenu(commands.Cog):
         self.bot.remove_command('help')
         self.ROOM_HELP_ID = 1526498364932227092
         self.dashboard_message = None 
-        self.is_spawned = False # Penanda agar tidak dobel
+        self.is_spawned = False 
 
-    # MENGGUNAKAN ON_READY SEBAGAI GANTI COG_LOAD
     @commands.Cog.listener()
     async def on_ready(self):
         if not self.is_spawned:
             self.is_spawned = True
+            # Beri jeda sedikit agar bot selesai memuat cache sebelum mengeksekusi
+            await asyncio.sleep(3)
             await self.spawn_dashboard()
 
     async def spawn_dashboard(self):
+        await self.bot.wait_until_ready()
+        
+        # Gunakan fetch_channel sebagai cadangan jika get_channel gagal (karena belum masuk cache)
         channel = self.bot.get_channel(self.ROOM_HELP_ID)
         if not channel:
-            return
+            try:
+                channel = await self.bot.fetch_channel(self.ROOM_HELP_ID)
+            except Exception:
+                return
 
         await channel.purge(limit=100)
 
@@ -168,8 +176,23 @@ class HelpMenu(commands.Cog):
         view = HelpDashboardView(self)
         self.dashboard_message = await channel.send(embed=embed, view=view)
 
+    # COMMAND PANCINGAN MANUAL
+    @commands.command()
+    @commands.has_permissions(administrator=True)
+    async def spawnhelp(self, ctx):
+        """Memunculkan dashboard help secara paksa (Hanya untuk Admin)"""
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        await self.spawn_dashboard()
+
     @commands.Cog.listener()
     async def on_message(self, message):
+        # Abaikan command !spawnhelp agar tidak tertelan sistem auto-delete sebelum diproses
+        if message.content.startswith("!spawnhelp"):
+            return
+            
         if message.channel.id == self.ROOM_HELP_ID:
             if self.dashboard_message and message.id == self.dashboard_message.id:
                 return
