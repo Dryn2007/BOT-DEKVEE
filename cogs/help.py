@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 import asyncio
+import traceback
 
 class HelpDropdown(discord.ui.Select):
     def __init__(self, parent_view):
@@ -107,6 +108,18 @@ class HelpDashboardView(discord.ui.View):
         self.add_item(self.dropdown)
         self.add_item(self.done_button)
 
+    # >>> PENAMBAHAN SISTEM PELACAK ERROR DARI CLAUDE <<<
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item):
+        print(f"\n[HelpDashboardView ERROR] item={item} user={interaction.user} error={error!r}")
+        traceback.print_exc()
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.send_message(
+                    "❌ Terjadi kesalahan internal saat memuat menu. Coba lagi beberapa saat atau hubungi Admin.", ephemeral=True
+                )
+            except Exception:
+                pass
+
     def start_timer(self):
         if self.timeout_task:
             self.timeout_task.cancel()
@@ -196,7 +209,6 @@ class HelpMenu(commands.Cog):
             return
             
         if message.channel.id == self.ROOM_HELP_ID:
-            # Pastikan bot tidak menyapu pesannya sendiri
             if message.author == self.bot.user:
                 return
                 
