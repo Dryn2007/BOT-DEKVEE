@@ -3,6 +3,20 @@ from discord.ext import commands
 import asyncio
 import traceback
 
+# >>> CLASS BARU UNTUK TOMBOL "OK" DI PESAN PERINGATAN <<<
+class WarningView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=10.0)
+
+    @discord.ui.button(label="OK Paham", style=discord.ButtonStyle.secondary, emoji="👍")
+    async def ok_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            # Hapus pesan peringatan saat tombol OK diklik
+            await interaction.message.delete()
+        except Exception:
+            pass
+
+
 class HelpDropdown(discord.ui.Select):
     def __init__(self, parent_view):
         self.parent_view = parent_view
@@ -32,7 +46,9 @@ class HelpDropdown(discord.ui.Select):
         if view.locked_user is not None and view.locked_user != interaction.user.id:
             await interaction.response.send_message(
                 "⚠️ **Mohon tunggu!** Menu bantuan sedang digunakan oleh user lain. Tunggu gilirannya ya.", 
-                ephemeral=True
+                ephemeral=True,
+                view=WarningView(),   # Memunculkan tombol OK
+                delete_after=10.0     # Otomatis hilang dalam 10 detik
             )
             return
             
@@ -88,7 +104,12 @@ class DoneButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction):
         view = self.parent_view
         if view.locked_user != interaction.user.id:
-            await interaction.response.send_message("⚠️ Hanya user yang sedang membaca yang bisa ngeklik ini.", ephemeral=True)
+            await interaction.response.send_message(
+                "⚠️ Hanya user yang sedang membaca yang bisa ngeklik ini.", 
+                ephemeral=True,
+                view=WarningView(),   # Memunculkan tombol OK
+                delete_after=10.0     # Otomatis hilang dalam 10 detik
+            )
             return
             
         await view.reset_dashboard(interaction)
@@ -108,14 +129,16 @@ class HelpDashboardView(discord.ui.View):
         self.add_item(self.dropdown)
         self.add_item(self.done_button)
 
-    # >>> PENAMBAHAN SISTEM PELACAK ERROR DARI CLAUDE <<<
     async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item):
         print(f"\n[HelpDashboardView ERROR] item={item} user={interaction.user} error={error!r}")
         traceback.print_exc()
         if not interaction.response.is_done():
             try:
                 await interaction.response.send_message(
-                    "❌ Terjadi kesalahan internal saat memuat menu. Coba lagi beberapa saat atau hubungi Admin.", ephemeral=True
+                    "❌ Terjadi kesalahan internal saat memuat menu. Coba lagi beberapa saat atau hubungi Admin.", 
+                    ephemeral=True,
+                    view=WarningView(),
+                    delete_after=10.0
                 )
             except Exception:
                 pass
