@@ -10,25 +10,28 @@ class VoiceLog(commands.Cog):
         self.bot = bot
         self.pool = pool
         self.voice_sessions = {}
+        self.is_ready = False # Pengaman agar tidak dijalankan ganda saat reconnect
 
-    async def cog_load(self):
-        # 1. Buat tabel jika belum ada
-        await self.pool.execute('''
-            CREATE TABLE IF NOT EXISTS history (
-                tanggal TEXT,
-                channel_id BIGINT,
-                user_id BIGINT,
-                durasi REAL
-            )
-        ''')
-        
-        # 2. Jalankan tugas sinkronisasi otomatis saat bot baru menyala
-        asyncio.create_task(self.sync_active_sessions())
+    @commands.Cog.listener()
+    async def on_ready(self):
+        if not self.is_ready:
+            # 1. Buat tabel jika belum ada
+            await self.pool.execute('''
+                CREATE TABLE IF NOT EXISTS history (
+                    tanggal TEXT,
+                    channel_id BIGINT,
+                    user_id BIGINT,
+                    durasi REAL
+                )
+            ''')
+            
+            # 2. Jalankan tugas sinkronisasi otomatis
+            asyncio.create_task(self.sync_active_sessions())
+            self.is_ready = True
 
     async def sync_active_sessions(self):
         """Fitur baru: Memasukkan user yang sudah ada di VC saat bot restart"""
-        # Tunggu sampai cache bot siap membaca data server
-        await self.bot.wait_until_ready()
+        # HAPUS wait_until_ready karena on_ready sudah menjamin bot siap
         
         for guild in self.bot.guilds:
             for vc in guild.voice_channels:

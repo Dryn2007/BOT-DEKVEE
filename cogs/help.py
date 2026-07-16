@@ -71,7 +71,6 @@ class HelpDropdown(discord.ui.Select):
             embed.add_field(name="`!spawnstats`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memaksa dashboard statistik muncul ulang.", inline=False)
             embed.add_field(name="`!testxp <jumlah>`", value="**Akses:** Administrator\n**Fungsi:** Mode testing untuk suntik XP ke akun sendiri secara instan.", inline=False)
 
-        # Ubah teks placeholder dropdown
         self.placeholder = f"Sedang melihat: {val}"
 
         # 4. TAMBAHKAN TOMBOL "SELESAI" JIKA BELUM ADA
@@ -88,8 +87,6 @@ class DoneButton(discord.ui.Button):
         
     async def callback(self, interaction: discord.Interaction):
         view = self.parent_view
-        
-        # Tolak jika user yang klik bukan yang sedang pegang kendali
         if view.locked_user != interaction.user.id:
             await interaction.response.send_message("⚠️ Hanya user yang sedang membaca yang bisa menyelesaikan sesi ini.", ephemeral=True)
             return
@@ -100,38 +97,29 @@ class DoneButton(discord.ui.Button):
 
 class HelpDashboardView(discord.ui.View):
     def __init__(self, cog):
-        # Timeout None agar view menetap selamanya di channel
         super().__init__(timeout=None)
         self.cog = cog
-        
-        # Variabel untuk sistem antrean dan timer
         self.locked_user = None
         self.timeout_task = None
-        
-        # Inisialisasi komponen UI
         self.dropdown = HelpDropdown(self)
         self.done_button = DoneButton(self)
         self.add_item(self.dropdown)
 
     async def start_timer(self):
-        """Memulai atau merestart countdown 20 detik saat user beraktivitas."""
         if self.timeout_task:
             self.timeout_task.cancel()
         self.timeout_task = asyncio.create_task(self.timer_logic())
 
     async def timer_logic(self):
-        """Menunggu 20 detik, lalu mereset dashboard."""
         await asyncio.sleep(20.0)
         await self.reset_dashboard()
 
     async def reset_dashboard(self):
-        """Fungsi untuk mengembalikan dashboard ke wujud awal (Main Menu)."""
         self.locked_user = None
         if self.timeout_task:
             self.timeout_task.cancel()
             self.timeout_task = None
         
-        # Reset visual
         self.dropdown.placeholder = "Pilih fitur yang ingin dilihat..."
         if self.done_button in self.children:
             self.remove_item(self.done_button)
@@ -142,7 +130,6 @@ class HelpDashboardView(discord.ui.View):
             color=discord.Color.dark_theme()
         )
         
-        # Edit pesan dashboard bot ke bentuk semula
         if self.cog.dashboard_message:
             try:
                 await self.cog.dashboard_message.edit(embed=embed, view=self)
@@ -156,18 +143,20 @@ class HelpMenu(commands.Cog):
         self.bot.remove_command('help')
         self.ROOM_HELP_ID = 1526498364932227092
         self.dashboard_message = None 
+        self.is_spawned = False # Penanda agar tidak dobel
 
-    async def cog_load(self):
-        """Otomatis memunculkan dashboard di room saat bot menyala."""
-        self.bot.loop.create_task(self.spawn_dashboard())
+    # MENGGUNAKAN ON_READY SEBAGAI GANTI COG_LOAD
+    @commands.Cog.listener()
+    async def on_ready(self):
+        if not self.is_spawned:
+            self.is_spawned = True
+            await self.spawn_dashboard()
 
     async def spawn_dashboard(self):
-        await self.bot.wait_until_ready()
         channel = self.bot.get_channel(self.ROOM_HELP_ID)
         if not channel:
             return
 
-        # Sapu bersih semua pesan lama di room tersebut
         await channel.purge(limit=100)
 
         embed = discord.Embed(
@@ -181,12 +170,9 @@ class HelpMenu(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        # Auto delete semua pesan user di room help
         if message.channel.id == self.ROOM_HELP_ID:
-            # Kecualikan pesan dashboard bot itu sendiri agar tidak terhapus
             if self.dashboard_message and message.id == self.dashboard_message.id:
                 return
-                
             try:
                 await message.delete()
             except Exception:

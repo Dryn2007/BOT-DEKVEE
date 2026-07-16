@@ -9,9 +9,11 @@ class Dashboard(commands.Cog):
         self.channel_id = 1526614764799922236 
         self.dashboard_message = None
 
-    async def cog_load(self):
-        # Jalankan loop update otomatis saat bot menyala
-        self.update_dashboard.start()
+    @commands.Cog.listener()
+    async def on_ready(self):
+        # Jalankan loop update otomatis HANYA SETELAH bot menyala
+        if not self.update_dashboard.is_running():
+            self.update_dashboard.start()
 
     def cog_unload(self):
         # Hentikan loop jika cog dimatikan
@@ -19,7 +21,6 @@ class Dashboard(commands.Cog):
 
     @tasks.loop(minutes=15) # Dashboard akan refresh setiap 15 menit
     async def update_dashboard(self):
-        await self.bot.wait_until_ready()
         channel = self.bot.get_channel(self.channel_id)
         if not channel:
             return
