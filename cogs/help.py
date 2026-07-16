@@ -150,14 +150,12 @@ class HelpMenu(commands.Cog):
     async def on_ready(self):
         if not self.is_spawned:
             self.is_spawned = True
-            # Beri jeda sedikit agar bot selesai memuat cache sebelum mengeksekusi
             await asyncio.sleep(3)
             await self.spawn_dashboard()
 
     async def spawn_dashboard(self):
         await self.bot.wait_until_ready()
         
-        # Gunakan fetch_channel sebagai cadangan jika get_channel gagal (karena belum masuk cache)
         channel = self.bot.get_channel(self.ROOM_HELP_ID)
         if not channel:
             try:
@@ -176,7 +174,6 @@ class HelpMenu(commands.Cog):
         view = HelpDashboardView(self)
         self.dashboard_message = await channel.send(embed=embed, view=view)
 
-    # COMMAND PANCINGAN MANUAL
     @commands.command()
     @commands.has_permissions(administrator=True)
     async def spawnhelp(self, ctx):
@@ -189,13 +186,14 @@ class HelpMenu(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        # Abaikan command !spawnhelp agar tidak tertelan sistem auto-delete sebelum diproses
         if message.content.startswith("!spawnhelp"):
             return
             
         if message.channel.id == self.ROOM_HELP_ID:
-            if self.dashboard_message and message.id == self.dashboard_message.id:
+            # PERBAIKAN: Cegah bot menghapus pesannya sendiri (termasuk dashboard yang baru dikirim)
+            if message.author == self.bot.user:
                 return
+                
             try:
                 await message.delete()
             except Exception:
