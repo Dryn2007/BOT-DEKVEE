@@ -65,7 +65,7 @@ class RoleButton(discord.ui.Button):
 
 
 # ==========================================
-# 2. SISTEM AUTO-GATE (DENGAN FILTER ANTI-CHAT)
+# 2. SISTEM AUTO-GATE (DENGAN CONTOH SKL)
 # ==========================================
 class AutoGate(commands.Cog):
     def __init__(self, bot):
@@ -124,7 +124,8 @@ class AutoGate(commands.Cog):
             pesan = await pos_satpam.send(
                 f"🚨 **HALT!** Berhenti di situ, {member.mention}!\n\n"
                 f"Untuk masuk, **upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
-                f"⚠️ **PENTING:** Pastikan **Nama Lengkap, Program Studi (Prodi), Kampus Jakarta**, dan tahun **2026/2027** terlihat dengan jelas ya!\n"
+                f"⚠️ **PENTING:** Pastikan **Nama Lengkap, Program Studi (Prodi), Kampus Jakarta**, dan tahun **2026/2027** terlihat dengan jelas ya!\n\n"
+                f"📄 **Cek contoh SKL yang valid di sini:** https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing\n\n"
                 f"Ssst... ruangan ini cuma buat upload gambar, jadi dilarang chat. Langsung drop fotonya aja!"
             )
             await pesan.delete(delay=180)
@@ -153,9 +154,10 @@ class AutoGate(commands.Cog):
             if message.author.id not in self.warned_users:
                 self.warned_users.add(message.author.id)
                 peringatan = await message.channel.send(
-                    f"⚠️ **Tahan {message.author.mention}!** Ruangan ini khusus buat **upload foto SKL** (jpg/png). Tolong jangan ngirim chat atau file lain di mari ya."
+                    f"⚠️ **Tahan {message.author.mention}!** Ruangan ini khusus buat **upload foto SKL** (jpg/png). Tolong jangan ngirim chat di mari ya.\n"
+                    f"👉 **Bingung bentuk SKL-nya? Cek contohnya di sini:** https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing"
                 )
-                await peringatan.delete(delay=10)
+                await peringatan.delete(delay=15)
             return
 
         # JIKA GAMBAR VALID, LANJUTKAN PROSES
@@ -181,7 +183,6 @@ class AutoGate(commands.Cog):
                 syarat_kampus = "jakarta" in teks or "telkom university" in teks
                 syarat_tahun = "2026" in teks
                 
-                # Kita tambahkan pengecekan ekstra untuk prodi agar bot makin pintar
                 prodi_list = ["dkv", "desain komunikasi visual", "teknologi informasi", "tekinfo", "sistem informasi", "sisfor", "telekomunikasi", "tektel"]
                 syarat_prodi = any(p in teks for p in prodi_list)
 
@@ -195,7 +196,7 @@ class AutoGate(commands.Cog):
                     # Beri jeda 5 detik agar pesan terbaca sebelum ruangan menghilang
                     await asyncio.sleep(5)
 
-                    # 2. Berikan role MEMBER (Room pos-satpam akan otomatis tersembunyi setelah ini)
+                    # 2. Berikan role MEMBER
                     role_member = discord.utils.get(message.guild.roles, name="MEMBER")
                     if role_member: await message.author.add_roles(role_member)
 
@@ -230,7 +231,8 @@ class AutoGate(commands.Cog):
                 else:
                     tolak_msg = await message.channel.send(
                         f"❌ **Verifikasi Gagal, {nama_depan}** {message.author.mention}.\n"
-                        "Dokumen lu kurang lengkap nih! Pastikan **Nama, Prodi, Kampus Jakarta, dan Tahun 2026/2027** benar-benar kelihatan di fotonya. Silakan upload ulang atau panggil Admin."
+                        f"Dokumen lu kurang lengkap nih! Pastikan **Nama, Prodi, Kampus Jakarta, dan Tahun 2026/2027** benar-benar kelihatan di fotonya. Silakan upload ulang atau panggil Admin.\n"
+                        f"📄 **Cek contoh SKL yang bener di sini:** https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing"
                     )
                     await tolak_msg.delete(delay=15)
 
