@@ -4,109 +4,75 @@ import asyncio
 
 class HelpDashboardView(discord.ui.View):
     def __init__(self, cog):
-        # timeout=None agar dashboard menetap selamanya
         super().__init__(timeout=None)
         self.cog = cog
         self.locked_user = None
         self.timeout_task = None
-        
-        # Bangun UI untuk pertama kali
-        self.setup_ui(is_main_menu=True)
 
-    def setup_ui(self, is_main_menu=True, selected_val=None):
-        """Fungsi pembangun UI yang aman dari bug 'Interaction Failed'"""
-        self.clear_items()
-        
-        opsi = [
+    @discord.ui.select(
+        placeholder="Pilih fitur yang ingin dilihat...",
+        min_values=1, max_values=1,
+        custom_id="help_dropdown_main",
+        options=[
             discord.SelectOption(label="Leveling & Rank", description="Panduan sistem XP dan Role Hunter", emoji="🏆"),
             discord.SelectOption(label="Voice Log", description="Panduan statistik durasi Voice Channel", emoji="🔊"),
             discord.SelectOption(label="Admin Menu", description="Panduan command khusus Admin/Owner", emoji="👑")
         ]
-        
-        placeholder = "Pilih fitur yang ingin dilihat..."
-        if not is_main_menu and selected_val:
-            placeholder = f"Sedang melihat: {selected_val}"
-            
-        # 1. Buat Dropdown Utama
-        self.dropdown = discord.ui.Select(
-            placeholder=placeholder,
-            min_values=1, max_values=1, options=opsi,
-            custom_id="help_dropdown_main" # Wajib pakai custom_id agar permanen
-        )
-        self.dropdown.callback = self.dropdown_callback
-        self.add_item(self.dropdown)
-        
-        # 2. Buat Tombol Selesai (Hanya muncul jika sedang membuka menu)
-        if not is_main_menu:
-            self.done_button = discord.ui.Button(
-                label="Selesai Membaca", style=discord.ButtonStyle.success, emoji="✅",
-                custom_id="help_done_btn" # Wajib pakai custom_id agar permanen
-            )
-            self.done_button.callback = self.done_callback
-            self.add_item(self.done_button)
-
-    async def dropdown_callback(self, interaction: discord.Interaction):
-        # CEK SISTEM ANTREAN / LOCKING
+    )
+    async def select_menu(self, interaction: discord.Interaction, select: discord.ui.Select):
+        # 1. CEK SISTEM ANTREAN / LOCKING
         if self.locked_user is not None and self.locked_user != interaction.user.id:
             await interaction.response.send_message(
-                "⚠️ **Mohon tunggu!** Menu bantuan sedang digunakan oleh user lain. Sistem akan reset otomatis dalam 20 detik jika tidak ada aktivitas.", 
+                "⚠️ **Mohon tunggu!** Menu bantuan sedang digunakan oleh user lain. Tunggu gilirannya ya.", 
                 ephemeral=True
             )
             return
             
-        # KUNCI DASHBOARD UNTUK USER INI & RESTART TIMER
+        # 2. KUNCI DASHBOARD UNTUK USER INI & RESTART TIMER
         self.locked_user = interaction.user.id
         self.start_timer()
         
-        # TENTUKAN ISI PESAN
-        val = self.dropdown.values[0]
+        # 3. TENTUKAN ISI PESAN
+        val = select.values[0]
         embed = discord.Embed()
         
         if val == "Leveling & Rank":
-            embed = discord.Embed(
-                title="🏆 Panduan Leveling & Rank",
-                description="Bot menggunakan sistem Hybrid! Kamu dapat XP dari Chat (2 XP) dan dari VC (1 XP / 2 Menit).",
-                color=discord.Color.gold()
-            )
+            embed = discord.Embed(title="🏆 Panduan Leveling & Rank", description="Bot menggunakan sistem Hybrid! Kamu dapat XP dari Chat (2 XP) dan dari VC (1 XP / 2 Menit).", color=discord.Color.gold())
             embed.add_field(name="`!rank`", value="Melihat profil level, rank Hunter, dan progress bar XP kamu saat ini.", inline=False)
             embed.add_field(name="`!leaderboard`", value="Melihat 10 Hunter dengan level dan XP tertinggi di server.", inline=False)
             
         elif val == "Voice Log":
-            embed = discord.Embed(
-                title="🔊 Panduan Voice Log",
-                description="Bot mencatat berapa lama kamu nongkrong di Voice Channel secara permanen.",
-                color=discord.Color.blue()
-            )
+            embed = discord.Embed(title="🔊 Panduan Voice Log", description="Bot mencatat berapa lama kamu nongkrong di Voice Channel secara permanen.", color=discord.Color.blue())
             embed.add_field(name="`!vclog`", value="Menampilkan total statistik durasi seluruh member di VC untuk hari ini.", inline=False)
             embed.add_field(name="`!vclog history`", value="Menampilkan menu untuk melihat data durasi VC pada tanggal/hari sebelumnya.", inline=False)
 
         elif val == "Admin Menu":
-            embed = discord.Embed(
-                title="👑 Panduan Admin Menu",
-                description="Command khusus yang hanya bisa diakses oleh petinggi server.",
-                color=discord.Color.red()
-            )
+            embed = discord.Embed(title="👑 Panduan Admin Menu", description="Command khusus yang hanya bisa diakses oleh petinggi server.", color=discord.Color.red())
             embed.add_field(name="`!clear`", value="**Akses:** Owner Bot\n**Fungsi:** Menghapus (purge) pesan di channel (default 5, max 100).", inline=False)
             embed.add_field(name="`!spawnstats`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memaksa dashboard statistik muncul ulang.", inline=False)
             embed.add_field(name="`!testxp <jumlah>`", value="**Akses:** Administrator\n**Fungsi:** Mode testing untuk suntik XP ke akun sendiri secara instan.", inline=False)
             embed.add_field(name="`!spawnhelp`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memunculkan ulang dashboard help secara paksa.", inline=False)
 
-        # Bangun ulang UI untuk memunculkan tombol Selesai
-        self.setup_ui(is_main_menu=False, selected_val=val)
+        # 4. UBAH STATUS UI (Tanpa menghapus item)
+        select.placeholder = f"Sedang melihat: {val}"
+        self.done_btn.disabled = False # Nyalakan tombol Selesai
+            
         await interaction.response.edit_message(embed=embed, view=self)
 
-    async def done_callback(self, interaction: discord.Interaction):
+    @discord.ui.button(
+        label="Selesai Membaca", style=discord.ButtonStyle.success, emoji="✅", 
+        custom_id="help_done_btn", disabled=True # Awalnya dikunci / dimatikan
+    )
+    async def done_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.locked_user != interaction.user.id:
-            await interaction.response.send_message("⚠️ Hanya user yang sedang membaca yang bisa menyelesaikan sesi ini.", ephemeral=True)
+            await interaction.response.send_message("⚠️ Hanya user yang sedang membaca yang bisa ngeklik ini.", ephemeral=True)
             return
             
-        # Panggil fungsi reset dengan menyertakan interaction
         await self.reset_dashboard(interaction)
 
     def start_timer(self):
         if self.timeout_task:
             self.timeout_task.cancel()
-        # Buat task baru yang berjalan di background
         self.timeout_task = self.cog.bot.loop.create_task(self.timer_logic())
 
     async def timer_logic(self):
@@ -119,8 +85,9 @@ class HelpDashboardView(discord.ui.View):
             self.timeout_task.cancel()
             self.timeout_task = None
         
-        # Bangun ulang UI kembali ke Main Menu (tanpa tombol Selesai)
-        self.setup_ui(is_main_menu=True)
+        # Kembalikan tampilan UI ke awal
+        self.select_menu.placeholder = "Pilih fitur yang ingin dilihat..."
+        self.done_btn.disabled = True # Matikan lagi tombolnya
         
         embed = discord.Embed(
             title="🛠️ Pusat Bantuan DekVee",
@@ -128,7 +95,7 @@ class HelpDashboardView(discord.ui.View):
             color=discord.Color.dark_theme()
         )
         
-        # Update pesan melalui interaction (jika diklik user) atau edit manual (jika kena timer)
+        # Kirim pembaruan layar
         if interaction:
             try:
                 await interaction.response.edit_message(embed=embed, view=self)
@@ -151,7 +118,7 @@ class HelpMenu(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        # Daftarkan View ini ke memori internal agar anti-gagal meskipun bot ter-restart
+        # Mendaftarkan custom_id ke memori bot agar selalu aktif
         self.bot.add_view(HelpDashboardView(self))
         
         if not self.is_spawned:
@@ -192,15 +159,12 @@ class HelpMenu(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        # Abaikan command !spawnhelp
         if message.content.startswith("!spawnhelp"):
             return
             
         if message.channel.id == self.ROOM_HELP_ID:
-            # Pastikan bot tidak menghapus dashboard-nya sendiri
             if message.author == self.bot.user:
                 return
-                
             try:
                 await message.delete()
             except Exception:
