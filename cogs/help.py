@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import asyncio
 import traceback
+from datetime import timedelta
 
 # ====================================================================
 # 1. TAMPILAN MENU PRIVATE (HANYA DILIHAT OLEH USER YANG MASUK GRID)
@@ -101,7 +102,6 @@ class MainDashboardView(discord.ui.View):
                 custom_id=f"help_grid_{i}",
                 row=i // 2
             )
-            # Tombol secara permanen tidak di-disable agar bisa di-handle oleh logika 'Bouncer'
             btn.callback = self.make_callback(i)
             self.add_item(btn)
 
@@ -112,17 +112,14 @@ class MainDashboardView(discord.ui.View):
             # LOGIKA A: Grid Ini Sedang Dipakai
             if self.grid_status[index] is not None:
                 if self.grid_status[index] != user_id:
-                    # Bouncer: Tolak jika yang klik adalah orang lain
                     await interaction.response.send_message(
                         "⛔ **Grid ini sedang dipakai orang lain!** Silakan pilih Grid yang berwarna hijau (Tersedia).", 
                         ephemeral=True
                     )
                     return
-                # Jika yang klik adalah PEMILIK aslinya, lewati tahap ubah tombol dan langsung resend menu
             
             # LOGIKA B: Grid Ini Kosong (Baru mau dipakai)
             else:
-                # Cek dulu: Jangan biarkan 1 orang merampok 2 Grid sekaligus
                 for i, status in enumerate(self.grid_status):
                     if status == user_id:
                         await interaction.response.send_message(
@@ -131,7 +128,6 @@ class MainDashboardView(discord.ui.View):
                         )
                         return
 
-                # Kunci Grid ini untuk user tersebut
                 self.grid_status[index] = user_id
                 button = self.children[index]
                 
@@ -139,7 +135,6 @@ class MainDashboardView(discord.ui.View):
                 button.label = f"🔒 Dipakai {nama}"
                 button.style = discord.ButtonStyle.secondary
                 
-                # Update tampilan utama untuk memunculkan warna abu-abu ke publik
                 await interaction.response.edit_message(view=self)
 
             # LOGIKA C: Kirim (atau kirim ulang) Menu Private
@@ -150,14 +145,12 @@ class MainDashboardView(discord.ui.View):
                 color=discord.Color.brand_green()
             )
             
-            # Jika ini "Resend" (klik ulang), edit_message di atas tidak dieksekusi, jadi kita pakai send_message
             if not interaction.response.is_done():
                 await interaction.response.send_message(embed=embed_intro, view=private_view, ephemeral=True)
             else:
-                # Jika ini pertama kali (edit_message tereksekusi), kita pakai followup
                 await interaction.followup.send(embed=embed_intro, view=private_view, ephemeral=True)
 
-            # LOGIKA D: Restart Timer (Ini dia fitur Auto-Reset / Satpam Gaib-nya)
+            # LOGIKA D: Restart Timer
             if self.grid_tasks[index]:
                 self.grid_tasks[index].cancel()
             self.grid_tasks[index] = self.cog.bot.loop.create_task(self.timer_logic(index))
@@ -166,8 +159,8 @@ class MainDashboardView(discord.ui.View):
 
     async def timer_logic(self, index):
         try:
-            await asyncio.sleep(60.0) # Tunggu 60 detik
-            await self.unlock_grid(index) # Eksekusi pembersihan Grid jika waktu habis
+            await asyncio.sleep(60.0)
+            await self.unlock_grid(index)
         except asyncio.CancelledError:
             pass
 
@@ -175,7 +168,6 @@ class MainDashboardView(discord.ui.View):
         if self.grid_status[index] is None:
             return
 
-        # Kembalikan status Grid ke Hijau
         self.grid_status[index] = None
         button = self.children[index]
         button.label = f"Grid {index+1} (Tersedia)"
@@ -255,6 +247,40 @@ class HelpMenu(commands.Cog):
         if message.channel.id == self.ROOM_HELP_ID:
             try:
                 await message.delete()
+            except Exception:
+                pass
+
+    # ====================================================================
+    # 4. PENGHAPUS OTOMATIS COMMAND ADMIN (AUTO-SWEEP)
+    # ====================================================================
+    @commands.Cog.listener()
+    async def on_command_error(self, ctx, error):
+        # Abaikan error jika command typo/tidak ditemukan
+        if isinstance(error, commands.CommandNotFound):
+            return
+            
+        # Jika error disebabkan karena user biasa (bukan admin) mencoba pakai command admin
+        if isinstance(error, commands.CheckFailure):
+            # 1. Kirim pesan peringatan penolakan
+            alert = discord.Embed(
+                title="⛔ AKSES DITOLAK!",
+                description=f"{ctx.author.mention}, kamu tidak memiliki izin untuk menggunakan command tersebut.",
+                color=discord.Color.red()
+            )
+            warning_msg = await ctx.send(embed=alert)
+            
+            # 2. Tunggu 5 detik agar user sempat membaca peringatan
+            await asyncio.sleep(5.0)
+            
+            # 3. Hapus pesan peringatan dari bot
+            try:
+                await warning_msg.delete()
+            except Exception:
+                pass
+                
+            # 4. Hapus pesan command (ketikan asli) dari user
+            try:
+                await ctx.message.delete()
             except Exception:
                 pass
 
