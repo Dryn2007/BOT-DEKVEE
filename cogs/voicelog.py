@@ -5,6 +5,18 @@ import asyncpg
 import os
 import asyncio
 
+# ====================================================================
+# KONFIGURASI ROLE PRODI (WAJIB DIISI)
+# Masukkan ID Role untuk masing-masing Prodi (DKV, TEKINFO, dll) di dalam list ini.
+# Cara dapat ID Role: Pengaturan Server -> Roles -> Klik kanan Role -> Copy Role ID
+# ====================================================================
+PRODI_ROLE_IDS = [
+    1526565350731284532, # Ganti dengan ID Role Prodi DKV
+    1526566212077879438, # Ganti dengan ID Role Prodi TEKINFO
+    1526566441040478352, # Ganti dengan ID Role Prodi SISFOR
+    1526566818024783872  # Ganti dengan ID Role Prodi TEKTEL
+]
+
 class VoiceLog(commands.Cog):
     def __init__(self, bot, pool):
         self.bot = bot
@@ -31,8 +43,6 @@ class VoiceLog(commands.Cog):
 
     async def sync_active_sessions(self):
         """Fitur baru: Memasukkan user yang sudah ada di VC saat bot restart"""
-        # HAPUS wait_until_ready karena on_ready sudah menjamin bot siap
-        
         for guild in self.bot.guilds:
             for vc in guild.voice_channels:
                 for member in vc.members:
@@ -79,8 +89,15 @@ class VoiceLog(commands.Cog):
                 "channel_id": after.channel.id
             }
 
-    def build_embed(self, judul, data_durasi, real_time_sessions=None):
+    # >>> SISTEM FILTERING DITAMBAHKAN DI SINI <<<
+    def build_embed(self, guild, requester, judul, data_durasi, real_time_sessions=None):
         embed = discord.Embed(title=judul, color=discord.Color.blue())
+        
+        # Cek izin admin
+        is_admin = requester.guild_permissions.administrator
+        # Cari tahu role prodi si peminta
+        requester_prodi_roles = set([r.id for r in requester.roles if r.id in PRODI_ROLE_IDS])
+
         if real_time_sessions:
             for uid, session in real_time_sessions.items():
                 ongoing_duration = (datetime.now() - session["start_time"]).total_seconds()
@@ -94,17 +111,52 @@ class VoiceLog(commands.Cog):
             return embed
 
         for chan_id, users in data_durasi.items():
-            channel = self.bot.get_channel(chan_id)
+            channel = guild.get_channel(chan_id)
+            
+            # FILTER 1: Lewati channel yang tidak bisa dilihat oleh requester (Kecuali Admin)
+            if not is_admin and channel and not channel.permissions_for(requester).view_channel:
+                continue
+                
             channel_name = channel.name if channel else f"Channel ({chan_id})"
             sorted_users = sorted(users.items(), key=lambda x: x[1], reverse=True)
             teks_channel = ""
-            for uid, secs in sorted_users[:10]:
-                user = self.bot.get_user(uid)
-                nama_user = user.name if user else f"ID: {uid}"
+            count = 0
+            
+            for uid, secs in sorted_users:
+                # Batasi maksimal 10 orang per channel
+                if count >= 10: break
+                
+                member = guild.get_member(uid)
+                
+                # FILTER 2: Filter berdasarkan Role Prodi
+                if not is_admin:
+                    if requester_prodi_roles:
+                        if member:
+                            member_prodi_roles = set([r.id for r in member.roles if r.id in PRODI_ROLE_IDS])
+                            # Jika tidak ada irisan role prodi, sembunyikan user ini
+                            if not requester_prodi_roles.intersection(member_prodi_roles):
+                                continue 
+                        else:
+                            # Jika user sudah keluar dari server, sembunyikan untuk keamanan privasi
+                            continue 
+                    else:
+                        # Jika si peminta tidak punya role prodi, dia hanya boleh melihat dirinya sendiri
+                        if uid != requester.id:
+                            continue
+
+                nama_user = member.display_name if member else f"ID: {uid}"
                 jam, menit, detik = int(secs // 3600), int((secs % 3600) // 60), int(secs % 60)
                 waktu = f"{f'**{jam}j** ' if jam > 0 else ''}{f'**{menit}m** ' if menit > 0 else ''}**{detik}d**"
                 teks_channel += f"👤 **{nama_user}** : {waktu}\n"
-            embed.add_field(name=f"🔊 {channel_name}", value=teks_channel, inline=False)
+                count += 1
+                
+            if teks_channel != "":
+                embed.add_field(name=f"🔊 {channel_name}", value=teks_channel, inline=False)
+                
+        # Jika setelah difilter embed kosong
+        if len(embed.fields) == 0:
+            embed.description = "Tidak ada log aktivitas dari Prodimu pada tanggal ini."
+
         return embed
 
     @commands.command()
@@ -141,14 +193,14 @@ class VoiceLog(commands.Cog):
         else:
             records = await self.pool.fetch("SELECT channel_id, user_id, SUM(durasi) as total_durasi FROM history WHERE tanggal = $1 GROUP BY channel_id, user_id", tanggal_hari_ini)
             
-            # [PERBAIKAN] Logika dictionary dibuat murni menggunakan perulangan agar aman
             data_hari_ini = {}
             for row in records:
                 if row['channel_id'] not in data_hari_ini: 
                     data_hari_ini[row['channel_id']] = {}
                 data_hari_ini[row['channel_id']][row['user_id']] = row['total_durasi']
             
-            embed = self.build_embed(f"📊 Statistik VC: Hari Ini ({tanggal_hari_ini})", data_hari_ini, self.voice_sessions)
+            # Pass guild dan requester (ctx.author) untuk memfilter log
+            embed = self.build_embed(ctx.guild, ctx.author, f"📊 Statistik VC: Hari Ini ({tanggal_hari_ini})", data_hari_ini, self.voice_sessions)
             msg = await ctx.send(embed=embed)
             
             # 2. Hapus embed balasan hari ini setelah 30 detik
@@ -176,7 +228,9 @@ class HistoryDropdown(discord.ui.Select):
             data_history[row['channel_id']][row['user_id']] = row['total_durasi']
         
         sesi_realtime = self.cog_instance.voice_sessions if tanggal_dipilih == self.cog_instance.get_today_date() else None
-        embed = self.cog_instance.build_embed(f"📜 History VC: {tanggal_dipilih}", data_history, sesi_realtime)
+        
+        # Pass guild dan requester (interaction.user) untuk memfilter log
+        embed = self.cog_instance.build_embed(interaction.guild, interaction.user, f"📜 History VC: {tanggal_dipilih}", data_history, sesi_realtime)
         
         await interaction.response.edit_message(content=f"Menampilkan data untuk **{tanggal_dipilih}**:", embed=embed, view=None)
 
