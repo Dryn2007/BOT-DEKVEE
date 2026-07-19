@@ -19,7 +19,7 @@ class Dashboard(commands.Cog):
     def cog_unload(self):
         self.update_dashboard.cancel()
 
-    @tasks.loop(minutes=15)
+    @tasks.loop(minutes=1)
     async def update_dashboard(self):
         channel = self.bot.get_channel(STATS_CHANNEL_ID)
         if not channel: return
@@ -65,7 +65,7 @@ class Dashboard(commands.Cog):
         # 4. Bangun UI Dashboard
         embed = discord.Embed(
             title="📊 DASHBOARD STATISTIK KAMPUS",
-            description="*Data di bawah ini diperbarui secara otomatis setiap 15 menit.*",
+            description="*Data di bawah ini diperbarui secara otomatis setiap 1 menit.*",
             color=discord.Color.dark_teal()
         )
 
