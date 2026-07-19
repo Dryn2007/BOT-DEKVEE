@@ -157,11 +157,11 @@ class StreakSystem(commands.Cog):
             WHERE prodi_name = $1 AND chat_date = $2
         ''', prodi_name, today)
 
-        # 3. Trigger saat mencapai pas 5 orang (Ubah ke 1 jika ingin ditest sendirian)
-        if count == 2:
+        # 3. Trigger saat mencapai pas 5 orang
+        if count == 5:
             record = await self.bot.pool.fetchrow('SELECT current_streak, last_active_date FROM prodi_streaks WHERE prodi_name = $1', prodi_name)
 
-            new_streak = 3
+            new_streak = 1
             lost_streak_value = 0
             streak_mati = False
 
@@ -227,6 +227,48 @@ class StreakSystem(commands.Cog):
                             await ann_channel.send(content=teks, file=file)
                         else:
                             await ann_channel.send(content=f"{teks}\n*(Gambar {filename} belum diupload Admin)*")
+
+    # ====================================================================
+    # COMMAND: SET STREAK (UNTUK TESTING MILESTONE INSTAN)
+    # ====================================================================
+    @commands.command()
+    @commands.has_permissions(administrator=True)
+    async def setstreak(self, ctx, prodi: str = None, jumlah: int = None):
+        """Command mengubah angka streak secara instan untuk testing Milestone"""
+        if not prodi or jumlah is None:
+            await ctx.send("⚠️ Format salah! Gunakan: `!setstreak <NamaProdi> <Jumlah>` (Contoh: `!setstreak DKV 3`)")
+            return
+            
+        prodi = prodi.upper()
+        if prodi not in PRODI_ROOMS.values():
+            await ctx.send(f"⚠️ Prodi **{prodi}** tidak valid.")
+            return
+
+        today = datetime.now(WIB).date()
+
+        # Update database streak
+        await self.bot.pool.execute('''
+            INSERT INTO prodi_streaks (prodi_name, current_streak, last_active_date, lost_streak)
+            VALUES ($1, $2, $3, 0)
+            ON CONFLICT (prodi_name) DO UPDATE
+            SET current_streak = EXCLUDED.current_streak,
+                last_active_date = EXCLUDED.last_active_date
+        ''', prodi, jumlah, today)
+
+        await ctx.send(f"✅ Streak **{prodi}** berhasil disuntik menjadi **{jumlah} Hari**.")
+
+        # Cek jika angka yang disuntik adalah angka Milestone, langsung kirim gambarnya!
+        if jumlah in MILESTONES:
+            ann_channel = self.bot.get_channel(STREAK_ANNOUNCEMENT_ID)
+            if ann_channel:
+                filename = f"{prodi.lower()}_{jumlah}.png" 
+                teks = f"🔥 **WOW!** Prodi **{prodi}** berhasil mencapai **{jumlah} Hari Streak Api!** Terus pertahankan kekompakan kalian! 🚀"
+
+                if os.path.exists(filename):
+                    file = discord.File(filename, filename=filename)
+                    await ann_channel.send(content=teks, file=file)
+                else:
+                    await ann_channel.send(content=f"{teks}\n*(Gambar {filename} belum diupload Admin)*")
 
     # ====================================================================
     # COMMAND: PULIHKAN STREAK (MANUAL OLEH ADMIN JIKA DIPERLUKAN)
