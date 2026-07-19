@@ -88,7 +88,6 @@ class StreakSystem(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         if not self.is_db_ready:
-            # Setup Database dan tambahkan kolom lost_streak jika belum ada
             await self.bot.pool.execute('''
                 CREATE TABLE IF NOT EXISTS prodi_streaks (
                     prodi_name TEXT PRIMARY KEY,
@@ -134,7 +133,7 @@ class StreakSystem(commands.Cog):
             WHERE prodi_name = $1 AND chat_date = $2
         ''', prodi_name, today)
 
-        # 3. Trigger saat mencapai pas 5 orang
+        # 3. Trigger saat mencapai pas 5 orang (Ubah ke 1 jika ingin ditest sendirian)
         if count == 1:
             record = await self.bot.pool.fetchrow('SELECT current_streak, last_active_date FROM prodi_streaks WHERE prodi_name = $1', prodi_name)
 
@@ -164,7 +163,15 @@ class StreakSystem(commands.Cog):
                     lost_streak = EXCLUDED.lost_streak
             ''', prodi_name, new_streak, today, lost_streak_value)
 
-            # 4. Cek Milestone Pengumuman Gambar
+            # --- TAMBAHAN NOTIFIKASI DI ROOM PRODI TERSEBUT ---
+            notif_embed = discord.Embed(
+                title="🔥 API STREAK MENYALA! 🔥",
+                description=f"Kalian luar biasa! Target ngobrol harian tercapai.\nStreak **{prodi_name}** hari ini aman di angka **{new_streak} Hari**!",
+                color=discord.Color.orange()
+            )
+            await message.channel.send(embed=notif_embed)
+
+            # 4. Cek Milestone Pengumuman Gambar (Di Room Khusus)
             if new_streak in MILESTONES:
                 ann_channel = self.bot.get_channel(STREAK_ANNOUNCEMENT_ID)
                 if ann_channel:
@@ -210,6 +217,46 @@ class StreakSystem(commands.Cog):
         view = RestoreConfirmView(self, prodi, record['lost_streak'])
         await ctx.send(embed=embed, view=view)
 
+    # ====================================================================
+    # COMMAND: MATIKAN STREAK (UNTUK TESTING / ADMIN)
+    # ====================================================================
+    @commands.command()
+    @commands.has_permissions(administrator=True)
+    async def matikanstreak(self, ctx, prodi: str = None):
+        """Command untuk mematikan streak secara paksa (Untuk Testing)"""
+        if not prodi:
+            await ctx.send("⚠️ Format salah! Gunakan: `!matikanstreak <NamaProdi>` (Contoh: `!matikanstreak DKV`)")
+            return
+            
+        prodi = prodi.upper()
+        if prodi not in PRODI_ROOMS.values():
+            await ctx.send(f"⚠️ Prodi **{prodi}** tidak valid. Pilihan: DKV, TEKINFO, SISFOR, TEKTEL.")
+            return
+
+        record = await self.bot.pool.fetchrow("SELECT current_streak FROM prodi_streaks WHERE prodi_name = $1", prodi)
+        
+        if not record or record['current_streak'] == 0:
+            await ctx.send(f"⚠️ Prodi **{prodi}** saat ini tidak memiliki streak yang aktif (Streak sudah 0).")
+            return
+
+        current_streak = record['current_streak']
+        # Memundurkan last_active_date menjadi 2 hari yang lalu agar dianggap putus
+        dua_hari_lalu = datetime.now(WIB).date() - timedelta(days=2)
+
+        # Pindahkan nilai ke lost_streak dan nol-kan current_streak
+        await self.bot.pool.execute('''
+            UPDATE prodi_streaks
+            SET lost_streak = $1, current_streak = 0, last_active_date = $2
+            WHERE prodi_name = $3
+        ''', current_streak, dua_hari_lalu, prodi)
+
+        embed = discord.Embed(
+            title="🛑 STREAK DIMATIKAN PAKSA",
+            description=f"Streak **{prodi}** (Sebesar {current_streak} Hari) telah dimatikan secara paksa oleh Admin.\n\n"
+                        f"Gunakan command `!pulihkanstreak {prodi}` untuk mengetes fitur pemulihan dan penumbalan XP.",
+            color=discord.Color.dark_grey()
+        )
+        await ctx.send(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(StreakSystem(bot))
