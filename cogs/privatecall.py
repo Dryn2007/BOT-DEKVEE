@@ -32,26 +32,24 @@ class RoomNameModal(discord.ui.Modal, title='Custom Nama Room Privat'):
         guild = interaction.guild
         creator = interaction.user
         
-        # Format nama sesuai permintaan: 📞・< custom user > Privat
+        # Format nama: 📞・< custom user > Privat
         custom_name = self.room_name.value
         full_name = f"📞・{custom_name} Privat"
 
-        # 1. Atur Hak Akses (Terlihat oleh semua, tapi yang bisa join hanya creator + teman)
+        # 1. Atur Hak Akses
         overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=True, connect=False), # Terlihat tapi digembok
-            guild.me: discord.PermissionOverwrite(view_channel=True, connect=True, manage_channels=True), # Bot
-            creator: discord.PermissionOverwrite(view_channel=True, connect=True) # Pembuat room
+            guild.default_role: discord.PermissionOverwrite(view_channel=True, connect=False), 
+            guild.me: discord.PermissionOverwrite(view_channel=True, connect=True, manage_channels=True), 
+            creator: discord.PermissionOverwrite(view_channel=True, connect=True) 
         }
         
-        # Masukkan teman-teman yang di-tag ke dalam daftar putih (Whitelist)
         for user in self.selected_users:
             overwrites[user] = discord.PermissionOverwrite(view_channel=True, connect=True)
 
-        # 2. Ambil Kategori Target
         category = guild.get_channel(CATEGORY_PRIVAT_ID)
 
-        # 3. Buat Voice Channel Baru di Kategori Tersebut
         try:
+            # 2. Buat Voice Channel Baru
             vc = await guild.create_voice_channel(
                 name=full_name,
                 category=category,
@@ -59,25 +57,32 @@ class RoomNameModal(discord.ui.Modal, title='Custom Nama Room Privat'):
                 reason="Auto Private Call System"
             )
             
-            # 4. Mulai Timer Grace Period (3 Menit)
+            # 3. Mulai Timer Grace Period (3 Menit)
             task = self.cog.bot.loop.create_task(self.cog.auto_delete_vc(vc.id, 180.0))
             self.cog.active_vcs[vc.id] = task
 
-            # 5. Lepaskan Grid agar bisa dipakai orang lain
+            # 4. Lepaskan Grid
             await self.main_view.unlock_grid(self.grid_index)
 
-            # 6. Ubah pesan UI menjadi Sukses
+            # 5. Ubah pesan UI menjadi Sukses
             embed = discord.Embed(
                 title="🎉 Room Berhasil Dibuat!",
                 description=f"Room privat kamu telah siap: {vc.mention}\n\n*Catatan: Room ini terlihat oleh publik tapi digembok. Room akan hancur jika kosong, atau jika hanya kamu sendirian di dalam sana selama 3 menit.*",
                 color=discord.Color.green()
             )
             await interaction.response.edit_message(embed=embed, view=None)
+
+            # 6. SIMPAN INTERAKSI INI UNTUK DIHAPUS NANTI SAAT ROOM HANCUR
+            self.cog.success_interactions[vc.id] = interaction
             
         except Exception as e:
             print(f"[PrivateCall Modal] Gagal membuat VC: {e!r}")
             await interaction.response.edit_message(content="❌ Terjadi kesalahan saat membuat room. Pastikan bot punya izin `Manage Channels` dan ID Kategori benar.", embed=None, view=None)
             await self.main_view.unlock_grid(self.grid_index)
+            # Hapus pesan error dalam 5 detik
+            await asyncio.sleep(5)
+            try: await interaction.delete_original_response()
+            except: pass
 
 
 # ====================================================================
@@ -85,14 +90,15 @@ class RoomNameModal(discord.ui.Modal, title='Custom Nama Room Privat'):
 # ====================================================================
 class PrivateCallConfigView(discord.ui.View):
     def __init__(self, main_view, grid_index, cog):
-        super().__init__(timeout=120.0) # Waktu setup room 120 detik
+        super().__init__(timeout=120.0) 
         self.main_view = main_view
         self.grid_index = grid_index
         self.cog = cog
+        self.selected_users = []
 
         self.select_users = discord.ui.UserSelect(
             placeholder="Tag teman (Kosongkan jika untuk sendiri)...", 
-            min_values=2, # <<< UBAH KE 0 AGAR BISA BIKIN ROOM SENDIRIAN
+            min_values=2, # << BISA BIKIN ROOM SENDIRIAN TANPA TAG ORANG
             max_values=10
         )
         self.select_users.callback = self.select_callback
@@ -107,15 +113,13 @@ class PrivateCallConfigView(discord.ui.View):
         self.add_item(self.btn_cancel)
 
     async def select_callback(self, interaction: discord.Interaction):
-        # Cukup defer saja agar Discord tidak menganggap interaksi error/loading terus
+        self.selected_users = self.select_users.values
         await interaction.response.defer() 
 
     async def create_callback(self, interaction: discord.Interaction):
-        # PERBAIKAN: Ambil nilai langsung dari wujud fisik dropdown saat tombol diklik
-        # Dijamin tidak akan pernah nyangkut atau error lagi!
+        # Ambil user langsung agar tidak ada bug "belum memilih siapapun"
         selected_users = self.select_users.values
-
-        # Panggil Pop-up Modal untuk mengisi nama room, lempar data temannya ke sana
+        
         modal = RoomNameModal(self.main_view, self.grid_index, self.cog, selected_users)
         await interaction.response.send_modal(modal)
 
@@ -129,6 +133,8 @@ class PrivateCallConfigView(discord.ui.View):
 
     async def on_timeout(self):
         await self.main_view.unlock_grid(self.grid_index)
+
+
 # ====================================================================
 # 3. DASHBOARD 4 GRID
 # ====================================================================
@@ -156,18 +162,20 @@ class MainPrivateCallDashboard(discord.ui.View):
 
             if self.grid_status[index] is not None:
                 if self.grid_status[index] != user_id:
-                    await interaction.response.send_message(
-                        "⛔ **Loket ini sedang dipakai orang lain!** Silakan pilih Grid yang berwarna hijau.", 
-                        ephemeral=True
-                    )
+                    # PERINGATAN HILANG DALAM 3 DETIK
+                    await interaction.response.send_message("⛔ **Loket ini sedang dipakai orang lain!** Silakan pilih Grid yang berwarna hijau.", ephemeral=True)
+                    await asyncio.sleep(3)
+                    try: await interaction.delete_original_response()
+                    except: pass
                     return
             else:
                 for i, status in enumerate(self.grid_status):
                     if status == user_id:
-                        await interaction.response.send_message(
-                            f"⚠️ **Kamu masih membuka menu di Grid {i+1}!** Selesaikan dulu di sana.", 
-                            ephemeral=True
-                        )
+                        # PERINGATAN HILANG DALAM 3 DETIK
+                        await interaction.response.send_message(f"⚠️ **Kamu masih membuka menu di Grid {i+1}!** Selesaikan dulu di sana.", ephemeral=True)
+                        await asyncio.sleep(3)
+                        try: await interaction.delete_original_response()
+                        except: pass
                         return
 
                 self.grid_status[index] = user_id
@@ -199,7 +207,7 @@ class MainPrivateCallDashboard(discord.ui.View):
 
     async def timer_logic(self, index):
         try:
-            await asyncio.sleep(120.0) # Waktu tunggu Grid ditingkatkan menyesuaikan batas Modal
+            await asyncio.sleep(120.0) 
             await self.unlock_grid(index)
         except asyncio.CancelledError:
             pass
@@ -233,6 +241,7 @@ class PrivateCallCog(commands.Cog):
         self.dashboard_message = None
         self.is_spawned = False
         self.active_vcs = {} 
+        self.success_interactions = {} # << MENYIMPAN PESAN SUKSES UNTUK DIHAPUS NANTI
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -263,7 +272,6 @@ class PrivateCallCog(commands.Cog):
     @commands.command()
     @commands.has_permissions(administrator=True)
     async def spawncall(self, ctx):
-        """Memunculkan dashboard private call secara paksa"""
         try: await ctx.message.delete()
         except: pass
         await self.spawn_dashboard()
@@ -275,6 +283,15 @@ class PrivateCallCog(commands.Cog):
         if message.channel.id == ROOM_CALL_ID:
             try: await message.delete()
             except: pass
+
+    # FUNGSI UNTUK MENGHAPUS PESAN "ROOM BERHASIL DIBUAT"
+    async def delete_success_msg(self, vc_id):
+        if vc_id in self.success_interactions:
+            inter = self.success_interactions.pop(vc_id)
+            try:
+                await inter.delete_original_response()
+            except Exception:
+                pass # Expired setelah 15 menit oleh Discord
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
@@ -292,11 +309,12 @@ class PrivateCallCog(commands.Cog):
             self.active_vcs[vc.id] = None
 
         if members_count == 0:
-            try: 
-                await vc.delete()
-            except Exception: 
-                pass
+            try: await vc.delete()
+            except Exception: pass
+            
             self.active_vcs.pop(vc.id, None)
+            # Hapus notif "Room Berhasil Dibuat"
+            await self.delete_success_msg(vc.id)
 
         elif members_count == 1:
             task = self.bot.loop.create_task(self.auto_delete_vc(vc.id, 180.0))
@@ -307,11 +325,12 @@ class PrivateCallCog(commands.Cog):
             await asyncio.sleep(delay)
             vc = self.bot.get_channel(vc_id)
             if vc:
-                try: 
-                    await vc.delete()
-                except Exception: 
-                    pass
+                try: await vc.delete()
+                except Exception: pass
+                
             self.active_vcs.pop(vc_id, None)
+            # Hapus notif "Room Berhasil Dibuat"
+            await self.delete_success_msg(vc_id)
         except asyncio.CancelledError:
             pass
 
