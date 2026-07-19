@@ -25,7 +25,7 @@ WIB = timezone(timedelta(hours=7))
 # ====================================================================
 class RestoreConfirmView(discord.ui.View):
     def __init__(self, cog, prodi_name, lost_streak):
-        super().__init__(timeout=60.0)
+        super().__init__(timeout=86400.0) # Timeout 1 hari
         self.cog = cog
         self.prodi_name = prodi_name
         self.lost_streak = lost_streak
@@ -40,7 +40,7 @@ class RestoreConfirmView(discord.ui.View):
         role = discord.utils.get(guild.roles, name=self.prodi_name)
         
         if not role:
-            await interaction.followup.send(f"❌ Role {self.prodi_name} tidak ditemukan di server ini.", ephemeral=True)
+            await interaction.channel.send(f"❌ Role {self.prodi_name} tidak ditemukan di server ini.")
             return
 
         # 1. POTONG 50% XP & KALKULASI ULANG LEVEL SECARA AKURAT
@@ -48,25 +48,18 @@ class RestoreConfirmView(discord.ui.View):
         for member in role.members:
             if member.bot: continue
             try:
-                # Ambil data XP saat ini dari database
                 record = await self.cog.bot.pool.fetchrow("SELECT xp FROM levels WHERE user_id = $1", member.id)
                 if record:
-                    # Potong XP jadi setengah
                     new_xp = int(record['xp'] / 2)
-                    
-                    # Kalkulasi ulang level yang tepat berdasarkan XP yang tersisa
-                    # Menggunakan rumus dari sistem Leveling kamu: 50 * (lvl^2)
                     new_level = 1
                     while 50 * (new_level ** 2) <= new_xp:
                         new_level += 1
                     
-                    # Update database dengan XP dan Level yang sudah valid
                     await self.cog.bot.pool.execute('''
                         UPDATE levels 
                         SET xp = $1, level = $2 
                         WHERE user_id = $3
                     ''', new_xp, new_level, member.id)
-                    
                     members_affected += 1
             except Exception as e:
                 print(f"[Error Restore] Gagal potong XP user {member.id}: {e}")
@@ -79,15 +72,36 @@ class RestoreConfirmView(discord.ui.View):
             WHERE prodi_name = $2
         ''', yesterday, self.prodi_name)
 
+        # 3. UNPIN & HAPUS PESAN LAMA
+        try:
+            await interaction.message.unpin(reason="Streak telah dipulihkan")
+            await interaction.message.delete()
+        except:
+            pass
+
+        # 4. KIRIM PENGUMUMAN SUKSES
         embed = discord.Embed(
             title="🔥 STREAK BERHASIL DIPULIHKAN! 🔥",
-            description=f"Ritual berhasil! Streak **{self.prodi_name}** telah kembali ke angka **{self.lost_streak} Hari**.\n\n"
+            description=f"Ritual berhasil, {interaction.user.mention}! Streak **{self.prodi_name}** telah kembali ke angka **{self.lost_streak} Hari**.\n\n"
                         f"💀 *Sebagai bayarannya, {members_affected} mahasiswa {self.prodi_name} telah kehilangan 50% XP mereka (Level telah disesuaikan).* \n\n"
                         f"*(Kalian bisa mengecek rank baru kalian dengan menggunakan command !rank)*",
             color=discord.Color.brand_red()
         )
         embed.set_footer(text="Ayo cepat chat di room prodi hari ini sebelum streak mati lagi!")
-        await interaction.edit_original_response(embed=embed, view=None)
+        await interaction.channel.send(embed=embed)
+
+    @discord.ui.button(label="Batal", style=discord.ButtonStyle.secondary)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        
+        # UNPIN & HAPUS PESAN
+        try:
+            await interaction.message.unpin(reason="Pemulihan dibatalkan")
+            await interaction.message.delete()
+        except:
+            pass
+            
+        await interaction.channel.send(f"❌ Ritual pemulihan dibatalkan oleh {interaction.user.mention}. XP aman, tapi streak tetap hangus.")
 
 
 class StreakSystem(commands.Cog):
@@ -115,7 +129,7 @@ class StreakSystem(commands.Cog):
                 );
             ''')
             self.is_db_ready = True
-            print("✅ Sistem Streak API (Modul Terpisah) siap!")
+            print("✅ Sistem Streak API siap!")
 
     # ====================================================================
     # SISTEM DETEKSI CHAT HARIAN & STREAK
@@ -149,19 +163,22 @@ class StreakSystem(commands.Cog):
 
             new_streak = 1
             lost_streak_value = 0
+            streak_mati = False
 
             if record:
                 last_date = record['last_active_date']
                 
                 if last_date == today:
-                    return #2Sudah nambah hari ini
+                    return # Sudah nambah hari ini
                 elif last_date == yesterday:
                     new_streak = record['current_streak'] + 1
                     lost_streak_value = record.get('lost_streak', 0)
                 else:
-                    # STREAK MATI! Simpan streak lama ke lost_streak
+                    # STREAK MATI!
                     lost_streak_value = record['current_streak']
                     new_streak = 1 
+                    if lost_streak_value > 0:
+                        streak_mati = True
 
             # Simpan data streak ke DB
             await self.bot.pool.execute('''
@@ -173,41 +190,57 @@ class StreakSystem(commands.Cog):
                     lost_streak = EXCLUDED.lost_streak
             ''', prodi_name, new_streak, today, lost_streak_value)
 
-            # --- TAMBAHAN NOTIFIKASI DI ROOM PRODI TERSEBUT ---
-            notif_embed = discord.Embed(
-                title="🔥 API STREAK MENYALA! 🔥",
-                description=f"Kalian luar biasa! Target ngobrol harian tercapai.\nStreak **{prodi_name}** hari ini aman di angka **{new_streak} Hari**!",
-                color=discord.Color.orange()
-            )
-            await message.channel.send(embed=notif_embed)
+            # JIKA STREAK TERNYATA MATI, MUNCULKAN TOMBOL PIN OTOMATIS
+            if streak_mati:
+                embed_mati = discord.Embed(
+                    title="💔 STREAK API MATI!",
+                    description=f"Oh tidak! Kalian tidak mencapai target harian kemarin, sehingga Streak **{lost_streak_value} Hari** kalian hangus!\n\n"
+                                "Tapi tenang, kalian bisa **PULIHKAN STREAK** ini sekarang juga.\n"
+                                f"⚠️ **Syarat:** Seluruh member {prodi_name} akan kehilangan **50% XP dan Level**.\n"
+                                "Silakan klik tombol di bawah jika kalian berani berkorban!",
+                    color=discord.Color.dark_red()
+                )
+                view = RestoreConfirmView(self, prodi_name, lost_streak_value)
+                msg_pin = await message.channel.send(embed=embed_mati, view=view)
+                try:
+                    await msg_pin.pin(reason="Pemberitahuan Kematian Streak")
+                except:
+                    pass
+            else:
+                # JIKA AMAN, BERI NOTIFIKASI NYALA
+                notif_embed = discord.Embed(
+                    title="🔥 API STREAK MENYALA! 🔥",
+                    description=f"Kalian luar biasa! Target ngobrol harian tercapai.\nStreak **{prodi_name}** hari ini aman di angka **{new_streak} Hari**!",
+                    color=discord.Color.orange()
+                )
+                await message.channel.send(embed=notif_embed)
 
-            # 4. Cek Milestone Pengumuman Gambar (Di Room Khusus)
-            if new_streak in MILESTONES:
-                ann_channel = self.bot.get_channel(STREAK_ANNOUNCEMENT_ID)
-                if ann_channel:
-                    filename = f"{prodi_name.lower()}_{new_streak}.png" 
-                    teks = f"🔥 **WOW!** Prodi **{prodi_name}** berhasil mencapai **{new_streak} Hari Streak Api!** Terus pertahankan kekompakan kalian! 🚀"
+                # Cek Milestone Pengumuman Gambar (Di Room Khusus)
+                if new_streak in MILESTONES:
+                    ann_channel = self.bot.get_channel(STREAK_ANNOUNCEMENT_ID)
+                    if ann_channel:
+                        filename = f"{prodi_name.lower()}_{new_streak}.png" 
+                        teks = f"🔥 **WOW!** Prodi **{prodi_name}** berhasil mencapai **{new_streak} Hari Streak Api!** Terus pertahankan kekompakan kalian! 🚀"
 
-                    if os.path.exists(filename):
-                        file = discord.File(filename, filename=filename)
-                        await ann_channel.send(content=teks, file=file)
-                    else:
-                        await ann_channel.send(content=f"{teks}\n*(Gambar {filename} belum diupload Admin)*")
+                        if os.path.exists(filename):
+                            file = discord.File(filename, filename=filename)
+                            await ann_channel.send(content=teks, file=file)
+                        else:
+                            await ann_channel.send(content=f"{teks}\n*(Gambar {filename} belum diupload Admin)*")
 
     # ====================================================================
-    # COMMAND: PULIHKAN STREAK (KHUSUS ADMIN)
+    # COMMAND: PULIHKAN STREAK (MANUAL OLEH ADMIN JIKA DIPERLUKAN)
     # ====================================================================
     @commands.command()
     @commands.has_permissions(administrator=True)
     async def pulihkanstreak(self, ctx, prodi: str = None):
-        """Command untuk memulihkan streak yang mati dengan menumbalkan XP"""
         if not prodi:
-            await ctx.send("⚠️ Format salah! Gunakan: `!pulihkanstreak <NamaProdi>` (Contoh: `!pulihkanstreak DKV`)")
+            await ctx.send("⚠️ Format salah! Gunakan: `!pulihkanstreak <NamaProdi>`")
             return
             
         prodi = prodi.upper()
         if prodi not in PRODI_ROOMS.values():
-            await ctx.send(f"⚠️ Prodi **{prodi}** tidak valid. Pilihan: DKV, TEKINFO, SISFOR, TEKTEL.")
+            await ctx.send(f"⚠️ Prodi **{prodi}** tidak valid.")
             return
 
         record = await self.bot.pool.fetchrow("SELECT current_streak, lost_streak FROM prodi_streaks WHERE prodi_name = $1", prodi)
@@ -225,22 +258,26 @@ class StreakSystem(commands.Cog):
         )
 
         view = RestoreConfirmView(self, prodi, record['lost_streak'])
-        await ctx.send(embed=embed, view=view)
+        msg = await ctx.send(embed=embed, view=view)
+        try:
+            await msg.pin()
+        except:
+            pass
 
     # ====================================================================
-    # COMMAND: MATIKAN STREAK (UNTUK TESTING / ADMIN)
+    # COMMAND: MATIKAN STREAK (UNTUK TESTING)
     # ====================================================================
     @commands.command()
     @commands.has_permissions(administrator=True)
     async def matikanstreak(self, ctx, prodi: str = None):
-        """Command untuk mematikan streak secara paksa (Untuk Testing)"""
+        """Mematikan streak dan langsung mengirimkan Pin Pemulihan ke Room Prodi"""
         if not prodi:
-            await ctx.send("⚠️ Format salah! Gunakan: `!matikanstreak <NamaProdi>` (Contoh: `!matikanstreak DKV`)")
+            await ctx.send("⚠️ Format salah! Gunakan: `!matikanstreak <NamaProdi>`")
             return
             
         prodi = prodi.upper()
         if prodi not in PRODI_ROOMS.values():
-            await ctx.send(f"⚠️ Prodi **{prodi}** tidak valid. Pilihan: DKV, TEKINFO, SISFOR, TEKTEL.")
+            await ctx.send(f"⚠️ Prodi **{prodi}** tidak valid.")
             return
 
         record = await self.bot.pool.fetchrow("SELECT current_streak FROM prodi_streaks WHERE prodi_name = $1", prodi)
@@ -250,38 +287,57 @@ class StreakSystem(commands.Cog):
             return
 
         current_streak = record['current_streak']
-        # Memundurkan last_active_date menjadi 2 hari yang lalu agar dianggap putus
         dua_hari_lalu = datetime.now(WIB).date() - timedelta(days=2)
 
-        # Pindahkan nilai ke lost_streak dan nol-kan current_streak
+        # Simpan ke lost_streak
         await self.bot.pool.execute('''
             UPDATE prodi_streaks
             SET lost_streak = $1, current_streak = 0, last_active_date = $2
             WHERE prodi_name = $3
         ''', current_streak, dua_hari_lalu, prodi)
 
-        embed = discord.Embed(
-            title="🛑 STREAK DIMATIKAN PAKSA",
-            description=f"Streak **{prodi}** (Sebesar {current_streak} Hari) telah dimatikan secara paksa oleh Admin.\n\n"
-                        f"Gunakan command `!pulihkanstreak {prodi}` untuk mengetes fitur pemulihan dan penumbalan XP.",
-            color=discord.Color.dark_grey()
-        )
-        await ctx.send(embed=embed)
+        await ctx.send(f"✅ Streak **{prodi}** berhasil dimatikan paksa. Pesan pemulihan telah dikirim ke room mereka.")
 
-# ====================================================================
+        # Cari ID Room Prodi
+        target_channel_id = None
+        for cid, pname in PRODI_ROOMS.items():
+            if pname == prodi:
+                target_channel_id = cid
+                break
+
+        # Kirim Tombol Pemulihan ke Room Mereka
+        if target_channel_id:
+            target_channel = self.bot.get_channel(target_channel_id)
+            if target_channel:
+                embed_mati = discord.Embed(
+                    title="💔 STREAK API MATI!",
+                    description=f"Oh tidak! Streak **{current_streak} Hari** kalian telah putus!\n\n"
+                                "Tapi tenang, kalian bisa **PULIHKAN STREAK** ini sekarang juga.\n"
+                                f"⚠️ **Syarat:** Seluruh member {prodi} akan kehilangan **50% XP dan Level**.\n"
+                                "Silakan klik tombol di bawah jika kalian berani berkorban!",
+                    color=discord.Color.dark_red()
+                )
+                view = RestoreConfirmView(self, prodi, current_streak)
+                msg_pin = await target_channel.send(embed=embed_mati, view=view)
+                try:
+                    await msg_pin.pin(reason="Pemberitahuan Kematian Streak")
+                except:
+                    pass
+
+    # ====================================================================
     # COMMAND DARURAT: KEMBALIKAN XP (FIX BUG)
     # ====================================================================
     @commands.command()
     @commands.has_permissions(administrator=True)
     async def kembalikanxp(self, ctx, prodi: str = None):
-        """Command darurat untuk mengembalikan XP yang terpotong bug sebelumnya"""
+        """Command darurat untuk mengembalikan XP"""
         if not prodi:
-            await ctx.send("⚠️ Format salah! Gunakan: `!kembalikanxp <NamaProdi>` (Contoh: `!kembalikanxp DKV`)")
+            await ctx.send("⚠️ Format salah! Gunakan: `!kembalikanxp <NamaProdi>`")
             return
             
         prodi = prodi.upper()
         if prodi not in PRODI_ROOMS.values():
-            await ctx.send(f"⚠️ Prodi **{prodi}** tidak valid. Pilihan: DKV, TEKINFO, SISFOR, TEKTEL.")
+            await ctx.send(f"⚠️ Prodi **{prodi}** tidak valid.")
             return
 
         role = discord.utils.get(ctx.guild.roles, name=prodi)
@@ -293,24 +349,18 @@ class StreakSystem(commands.Cog):
         for member in role.members:
             if member.bot: continue
             try:
-                # Ambil data XP yang sudah terlanjur dipotong
                 record = await self.bot.pool.fetchrow("SELECT xp FROM levels WHERE user_id = $1", member.id)
                 if record:
-                    # Kembalikan XP ke jumlah semula (Dikali 2)
                     restored_xp = record['xp'] * 2
-                    
-                    # Kalkulasi level yang seharusnya menggunakan rumus asli
                     restored_level = 1
                     while 50 * (restored_level ** 2) <= restored_xp:
                         restored_level += 1
                     
-                    # Update database dengan data yang sudah dipulihkan
                     await self.bot.pool.execute('''
                         UPDATE levels 
                         SET xp = $1, level = $2 
                         WHERE user_id = $3
                     ''', restored_xp, restored_level, member.id)
-                    
                     members_affected += 1
             except Exception as e:
                 print(f"[Error Refund] Gagal mengembalikan XP user {member.id}: {e}")
