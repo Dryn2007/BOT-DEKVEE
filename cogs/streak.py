@@ -268,5 +268,59 @@ class StreakSystem(commands.Cog):
         )
         await ctx.send(embed=embed)
 
+# ====================================================================
+    # COMMAND DARURAT: KEMBALIKAN XP (FIX BUG)
+    # ====================================================================
+    @commands.command()
+    @commands.has_permissions(administrator=True)
+    async def kembalikanxp(self, ctx, prodi: str = None):
+        """Command darurat untuk mengembalikan XP yang terpotong bug sebelumnya"""
+        if not prodi:
+            await ctx.send("⚠️ Format salah! Gunakan: `!kembalikanxp <NamaProdi>` (Contoh: `!kembalikanxp DKV`)")
+            return
+            
+        prodi = prodi.upper()
+        if prodi not in PRODI_ROOMS.values():
+            await ctx.send(f"⚠️ Prodi **{prodi}** tidak valid. Pilihan: DKV, TEKINFO, SISFOR, TEKTEL.")
+            return
+
+        role = discord.utils.get(ctx.guild.roles, name=prodi)
+        if not role:
+            await ctx.send(f"❌ Role {prodi} tidak ditemukan di server ini.")
+            return
+
+        members_affected = 0
+        for member in role.members:
+            if member.bot: continue
+            try:
+                # Ambil data XP yang sudah terlanjur dipotong
+                record = await self.bot.pool.fetchrow("SELECT xp FROM levels WHERE user_id = $1", member.id)
+                if record:
+                    # Kembalikan XP ke jumlah semula (Dikali 2)
+                    restored_xp = record['xp'] * 2
+                    
+                    # Kalkulasi level yang seharusnya menggunakan rumus asli
+                    restored_level = 1
+                    while 50 * (restored_level ** 2) <= restored_xp:
+                        restored_level += 1
+                    
+                    # Update database dengan data yang sudah dipulihkan
+                    await self.bot.pool.execute('''
+                        UPDATE levels 
+                        SET xp = $1, level = $2 
+                        WHERE user_id = $3
+                    ''', restored_xp, restored_level, member.id)
+                    
+                    members_affected += 1
+            except Exception as e:
+                print(f"[Error Refund] Gagal mengembalikan XP user {member.id}: {e}")
+
+        embed = discord.Embed(
+            title="🩹 XP BERHASIL DIPULIHKAN!",
+            description=f"Kompensasi berhasil diberikan! XP milik **{members_affected} mahasiswa {prodi}** telah dikali 2 (dikembalikan seperti semula), dan Level mereka telah diperbaiki secara otomatis.",
+            color=discord.Color.green()
+        )
+        await ctx.send(embed=embed)
+
 async def setup(bot):
     await bot.add_cog(StreakSystem(bot))
