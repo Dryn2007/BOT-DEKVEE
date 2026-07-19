@@ -197,7 +197,9 @@ class AutoGate(commands.Cog):
                 pass
 
             nama_depan = message.author.display_name.split()[0]
-            prompt = "Salin dan ketik ulang seluruh teks yang bisa kamu baca di gambar ini. Jangan berikan penjelasan apapun."
+            
+            # PROMPT DIPERTAJAM AGAR GEMINI LEBIH FOKUS
+            prompt = "Salin seluruh teks yang ada di gambar ini dengan teliti. Pastikan kamu membaca baris Program Studi, Tahun, dan Nama Kampus. Jangan berikan penjelasan."
             hasil_mentah = await self.panggil_gemini_api(prompt, image_data, attachment.content_type)
 
             if "KODE_BLOKIR_SENSOR" in hasil_mentah:
@@ -205,19 +207,33 @@ class AutoGate(commands.Cog):
                     f"❌ **Waduh {nama_depan}, sistem Google pusing baca dokumenmu!** {message.author.mention}\n"
                     "**SOLUSI:** Pastikan foto nggak blur dan teks **Nama, Prodi, Kampus, & Tahun** kelihatan jelas. Coba upload ulang gambarnya!"
                 )
-                # Pesan error akan ikut tersapu saat user upload gambar baru
             else:
-                teks = hasil_mentah.lower()
+                # >>> PERBAIKAN UTAMA: BERSIHKAN TEKS DARI ENTER (\n) <<<
+                teks = " ".join(hasil_mentah.lower().split())
+                
                 syarat_kampus = "jakarta" in teks or "telkom university" in teks
                 syarat_tahun = "2026" in teks
                 
-                prodi_list = ["dkv", "desain komunikasi visual", "teknologi informasi", "tekinfo", "sistem informasi", "sisfor", "telekomunikasi", "tektel"]
-                syarat_prodi = any(p in teks for p in prodi_list)
+                prodi_list = [
+                    "dkv", "desain komunikasi visual", 
+                    "teknologi informasi", "tekinfo", 
+                    "sistem informasi", "sisfor", 
+                    "telekomunikasi", "teknik telekomunikasi", "tektel"
+                ]
+                
+                # >>> PERBAIKAN 2: TANGKAP NAMA PRODI YANG KETEMU <<<
+                prodi_terdeteksi = None
+                for p in prodi_list:
+                    if p in teks:
+                        prodi_terdeteksi = p.title() # Bikin huruf depannya besar
+                        break
+
+                syarat_prodi = prodi_terdeteksi is not None
 
                 if syarat_kampus and syarat_tahun and syarat_prodi:
                     # Kirim pesan sukses di Pos Satpam
                     acc_msg = await message.channel.send(
-                        f"✅ **Verifikasi Berhasil!** Halo **{nama_depan}** {message.author.mention}, akses kampus lu udah dibuka. Cuss cek room welcome-center!"
+                        f"✅ **Verifikasi Berhasil!** Halo **{nama_depan}** {message.author.mention}, dokumen SKL lu lolos untuk prodi **{prodi_terdeteksi}**. Cuss cek room welcome-center!"
                     )
                     
                     # Beri jeda 5 detik agar pesan terbaca
@@ -239,8 +255,8 @@ class AutoGate(commands.Cog):
                             title="🎓 Welcome to Telyu Jekardah!",
                             description=(
                                 f"Helo welkam join Telyu Jekardah, kak **{nama_depan}**! {message.author.mention}\n\n"
-                                "Berkas SKL kamu udah aman. Sebelum mulai berpetualang dan mabar, kamu **wajib milih program studi dulu nih.**\n\n"
-                                "👉 **Silakan pilih satu role jurusan di bawah!**"
+                                f"Sistem kami mendeteksi kamu dari prodi **{prodi_terdeteksi}**. Sebelum mulai berpetualang dan mabar, kamu **wajib mengambil role jurusanmu dulu nih.**\n\n"
+                                "👉 **Silakan klik tombol prodi kamu di bawah!**"
                             ),
                             color=discord.Color.blue()
                         )
@@ -253,7 +269,7 @@ class AutoGate(commands.Cog):
                     if pengumuman_channel:
                         embed_pengumuman = discord.Embed(
                             title="🎉 MAHASISWA BARU TELAH TIBA!",
-                            description=f"Mari sambut **{nama_depan}** ({message.author.mention}) yang baru aja lolos verifikasi gerbang utama!\nSelamat bergabung di kampus, jangan lupa mampir ke kantin virtual!",
+                            description=f"Mari sambut **{nama_depan}** ({message.author.mention}) dari prodi **{prodi_terdeteksi}** yang baru aja lolos verifikasi gerbang utama!\nSelamat bergabung di kampus, jangan lupa mampir ke kantin virtual!",
                             color=discord.Color.gold()
                         )
                         embed_pengumuman.set_thumbnail(url=message.author.display_avatar.url)
@@ -266,7 +282,6 @@ class AutoGate(commands.Cog):
                         f"Dokumen lu kurang lengkap nih! Pastikan **Nama, Prodi, Kampus Jakarta, dan Tahun 2026/2027** benar-benar kelihatan di fotonya. Silakan upload ulang atau panggil Admin.\n"
                         f"📄 **Cek contoh SKL yang bener di sini:** https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing"
                     )
-                    # Pesan gagal juga akan disapu jika user kirim gambar lagi
 
         except Exception as e:
             await message.channel.send(f"⚠️ Waduh, sistem pusing: {e}")
