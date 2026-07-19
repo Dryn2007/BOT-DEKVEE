@@ -161,11 +161,11 @@ class StreakSystem(commands.Cog):
             background.text((350, 50), "MILESTONE UNLOCKED!", font=font_super, color="#FFD700")
             background.text((350, 80), f"PRODI {prodi_name}", font=font_title, color="#FFFFFF")
 
-            # 7. Badge / Pill 1: STREAK API (Kapsul Oranye)
+            # 7. Badge / Pill 1: STREAK API (Kapsul Oranye) dengan Emoji
             background.rectangle((350, 150), width=240, height=60, color="#FF4500", radius=30)
             background.text((380, 165), f"🔥 {new_streak} DAYS STREAK", font=font_badge, color="#FFFFFF")
 
-            # 8. Badge / Pill 2: TOTAL MESSAGES (Kapsul Abu-abu)
+            # 8. Badge / Pill 2: TOTAL MESSAGES (Kapsul Abu-abu) dengan Emoji
             background.rectangle((610, 150), width=230, height=60, color="#1A1C20", radius=30)
             background.text((645, 165), f"💬 {total_messages} CHATS", font=font_badge, color="#A5A7AA")
             
@@ -299,24 +299,28 @@ class StreakSystem(commands.Cog):
             return
 
         today = datetime.now(WIB).date()
-        dummy_messages = jumlah * 125 # Membuat angka chat pura-pura untuk testing
+
+        # Ambil total_messages ASLI yang sudah ada, jangan bikin dummy
+        existing = await self.bot.pool.fetchrow(
+            'SELECT total_messages FROM prodi_streaks WHERE prodi_name = $1', prodi
+        )
+        real_total_messages = existing['total_messages'] if existing and existing['total_messages'] else 0
 
         await self.bot.pool.execute('''
             INSERT INTO prodi_streaks (prodi_name, current_streak, last_active_date, lost_streak, total_messages)
             VALUES ($1, $2, $3, 0, $4)
             ON CONFLICT (prodi_name) DO UPDATE
             SET current_streak = EXCLUDED.current_streak,
-                last_active_date = EXCLUDED.last_active_date,
-                total_messages = EXCLUDED.total_messages
-        ''', prodi, jumlah, today, dummy_messages)
+                last_active_date = EXCLUDED.last_active_date
+        ''', prodi, jumlah, today, real_total_messages)
 
-        await ctx.send(f"✅ Streak **{prodi}** berhasil disuntik menjadi **{jumlah} Hari**.")
+        await ctx.send(f"✅ Streak **{prodi}** berhasil disuntik menjadi **{jumlah} Hari** (Total chat asli: {real_total_messages}).")
 
         if jumlah in MILESTONES:
             ann_channel = self.bot.get_channel(STREAK_ANNOUNCEMENT_ID)
             if ann_channel:
                 filename = f"{prodi.lower()}_{jumlah}.png" 
-                await self.kirim_kartu_pengumuman(ann_channel, prodi, jumlah, dummy_messages, filename)
+                await self.kirim_kartu_pengumuman(ann_channel, prodi, jumlah, real_total_messages, filename)
 
     # ====================================================================
     # COMMAND: MATIKAN STREAK & KEMBALIKAN XP (SAMA SEPERTI SEBELUMNYA)
