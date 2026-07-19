@@ -4,7 +4,7 @@ import aiohttp
 import os
 import base64
 import asyncio
-import re  # <--- DITAMBAHKAN UNTUK MELACAK 11 ANGKA REGISTRASI
+import re
 
 # Ambil API key dari .env
 gemini_key = os.getenv("GEMINI_API_KEY")
@@ -23,7 +23,6 @@ class AutoGate(commands.Cog):
         self.warned_users = set()
         self.is_ready = False
 
-    # Membuat Tabel Baru untuk mencatat Nomor Registrasi di Database
     @commands.Cog.listener()
     async def on_ready(self):
         if not self.is_ready:
@@ -74,18 +73,25 @@ class AutoGate(commands.Cog):
                 except KeyError:
                     raise Exception("Format JSON tidak terbaca.")
 
+    # ==============================================================
+    # FUNGSI UNTUK MEMUNCULKAN ULANG PESAN SURUH UPLOAD
+    # ==============================================================
+    async def send_halt_message(self, channel, member, is_retry=False):
+        sapaan = "Ayo coba lagi" if is_retry else "Berhenti di situ"
+        await channel.send(
+            f"🚨 **HALT!** {sapaan}, {member.mention}!\n\n"
+            f"Untuk masuk, **upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
+            f"⚠️ **PENTING:** Pastikan **Nama Lengkap, Nomor Registrasi (11 Angka), Prodi, Kampus Jakarta**, dan tahun **2026/2027** terlihat dengan jelas ya!\n\n"
+            f"📄 **Cek contoh SKL yang valid di sini:** https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing\n\n"
+            f"Ssst... ruangan ini cuma buat upload gambar, jadi dilarang chat. Langsung drop fotonya aja!"
+        )
+
     @commands.Cog.listener()
     async def on_member_join(self, member):
         if member.bot: return
         pos_satpam = self.bot.get_channel(self.pos_satpam_id)
         if pos_satpam:
-            await pos_satpam.send(
-                f"🚨 **HALT!** Berhenti di situ, {member.mention}!\n\n"
-                f"Untuk masuk, **upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
-                f"⚠️ **PENTING:** Pastikan **Nama Lengkap, Nomor Registrasi (11 Angka), Prodi, Kampus Jakarta**, dan tahun **2026/2027** terlihat dengan jelas ya!\n\n"
-                f"📄 **Cek contoh SKL yang valid di sini:** https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing\n\n"
-                f"Ssst... ruangan ini cuma buat upload gambar, jadi dilarang chat. Langsung drop fotonya aja!"
-            )
+            await self.send_halt_message(pos_satpam, member, is_retry=False)
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -99,7 +105,7 @@ class AutoGate(commands.Cog):
             peringatan_lolos = await message.channel.send(
                 f"⚠️ **Eits {message.author.mention}, kamu kan udah lolos verifikasi!** Nggak perlu upload SKL atau chat di sini lagi ya. Cuss langsung beraktivitas di dalam server!"
             )
-            await peringatan_lolos.delete(delay=10)
+            await peringatan_lolos.delete(delay=5)
             return
 
         is_valid_image = False
@@ -118,9 +124,10 @@ class AutoGate(commands.Cog):
                 peringatan = await message.channel.send(
                     f"⚠️ **Tahan {message.author.mention}!** Ruangan ini khusus buat **upload foto SKL** (jpg/png). Tolong jangan ngirim chat di mari ya."
                 )
-                await peringatan.delete(delay=15)
+                await peringatan.delete(delay=5)
             return
 
+        # Sapu bersih pesan bot sebelumnya (Pesan Halt sebelumnya dihapus)
         async for msg in message.channel.history(limit=50):
             if msg.author == self.bot.user and message.author.mention in msg.content:
                 try: await msg.delete()
@@ -136,52 +143,58 @@ class AutoGate(commands.Cog):
             except: pass
 
             nama_depan = message.author.display_name.split()[0]
-            discord_username = message.author.name # USERNAME ASLI DISCORD, BUKAN NICKNAME SERVER
+            discord_username = message.author.name 
             
-            # PROMPT KITA PERTAJAM AGAR WAJIB MEMBACA NOMOR REGISTRASI
             prompt = "Salin seluruh teks yang ada di gambar ini dengan teliti. Pastikan kamu membaca baris Nomor Registrasi (11 angka), Program Studi, Tahun, dan Nama Kampus. Jangan berikan penjelasan."
             hasil_mentah = await self.panggil_gemini_api(prompt, image_data, attachment.content_type)
 
             if "KODE_BLOKIR_SENSOR" in hasil_mentah:
-                await message.channel.send(
+                err_msg = await message.channel.send(
                     f"❌ **Waduh {nama_depan}, sistem Google pusing baca dokumenmu!** {message.author.mention}\n"
                     "**SOLUSI:** Pastikan foto nggak blur dan teks kelihatan jelas. Coba upload ulang gambarnya!"
                 )
+                await asyncio.sleep(5)
+                try: await err_msg.delete()
+                except: pass
+                await self.send_halt_message(message.channel, message.author, is_retry=True)
+
             else:
                 teks = " ".join(hasil_mentah.lower().split())
                 
-                # ==============================================================
-                # SISTEM DETEKSI DAN CEK NOMOR REGISTRASI (11 ANGKA)
-                # ==============================================================
-                # Mencari pola tepat 11 angka yang berjejer
+                # Cek 11 Angka
                 match_noreg = re.search(r'\b\d{11}\b', teks)
                 
                 if not match_noreg:
-                    await message.channel.send(
+                    err_msg = await message.channel.send(
                         f"❌ **Verifikasi Gagal, {nama_depan}** {message.author.mention}.\n"
                         f"Sistem tidak bisa menemukan **11 Angka Nomor Registrasi** di fotomu! Pastikan bagian tersebut tidak terpotong atau blur."
                     )
+                    await asyncio.sleep(5)
+                    try: await err_msg.delete()
+                    except: pass
+                    await self.send_halt_message(message.channel, message.author, is_retry=True)
                     return
                     
                 no_reg = match_noreg.group(0)
                 
-                # CEK APAKAH NOMOR REGISTRASI INI SUDAH PERNAH DIPAKAI SEBELUMNYA
+                # Cek Database
                 record = await self.bot.pool.fetchrow("SELECT username FROM skl_registry WHERE no_reg = $1", no_reg)
                 
                 if record:
                     if record['username'] != discord_username:
-                        # ANCAMAN TINGGI! ADA YANG MENCOBA MEMAKAI SKL ORANG LAIN
-                        await message.channel.send(
+                        err_msg = await message.channel.send(
                             f"🚨 **PELANGGARAN TERDETEKSI!** {message.author.mention}\n"
                             f"Nomor registrasi **{no_reg}** sudah tertaut dengan akun Discord lain (`{record['username']}`). Kamu tidak bisa menggunakan Dokumen SKL milik orang lain!"
                         )
+                        await asyncio.sleep(5)
+                        try: await err_msg.delete()
+                        except: pass
+                        await self.send_halt_message(message.channel, message.author, is_retry=True)
                         return
                     else:
-                        pass # Jika akunnya sama (misal dia keluar lalu masuk lagi)
+                        pass 
 
-                # ==============================================================
-                # LANJUT CEK PRODI DAN KAMPUS
-                # ==============================================================
+                # Cek Prodi dan Kampus
                 syarat_kampus = "jakarta" in teks or "telkom university" in teks
                 syarat_tahun = "2026" in teks
                 
@@ -226,16 +239,11 @@ class AutoGate(commands.Cog):
                         except discord.Forbidden:
                             pass
 
-                        # ==============================================================
-                        # SIMPAN NOMOR REGISTRASI DAN ROLE KE DATABASE
-                        # ==============================================================
                         try:
-                            # 1. Simpan ke registry anti-maling
                             await self.bot.pool.execute(
                                 "INSERT INTO skl_registry (no_reg, username) VALUES ($1, $2) ON CONFLICT (no_reg) DO NOTHING",
                                 no_reg, discord_username
                             )
-                            # 2. Simpan role
                             await self.bot.pool.execute(
                                 "INSERT INTO maba_roles (username, role_name) VALUES ($1, $2)",
                                 discord_username, role_target_name
@@ -243,7 +251,6 @@ class AutoGate(commands.Cog):
                         except Exception as e:
                             print(f"[DB ERROR] Gagal input ke database: {e}")
 
-                    # PENGUMUMAN
                     welcome_channel = self.bot.get_channel(self.welcome_center_id)
                     if welcome_channel:
                         embed = discord.Embed(
@@ -269,14 +276,23 @@ class AutoGate(commands.Cog):
                         await pengumuman_channel.send(embed=embed_pengumuman)
 
                 else:
-                    await message.channel.send(
+                    err_msg = await message.channel.send(
                         f"❌ **Verifikasi Gagal, {nama_depan}** {message.author.mention}.\n"
                         f"Dokumen lu kurang lengkap nih! Pastikan **Nama, Prodi, Kampus Jakarta, dan Tahun 2026/2027** benar-benar kelihatan di fotonya. Silakan upload ulang atau panggil Admin.\n"
                         f"📄 **Cek contoh SKL yang bener di sini:** https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing"
                     )
+                    await asyncio.sleep(5)
+                    try: await err_msg.delete()
+                    except: pass
+                    await self.send_halt_message(message.channel, message.author, is_retry=True)
 
         except Exception as e:
-            await message.channel.send(f"⚠️ Waduh, sistem pusing: {e}")
+            err_msg = await message.channel.send(f"⚠️ Waduh, sistem pusing: {e}")
+            await asyncio.sleep(5)
+            try: await err_msg.delete()
+            except: pass
+            await self.send_halt_message(message.channel, message.author, is_retry=True)
+
         finally:
             try: await message.delete()
             except: pass
