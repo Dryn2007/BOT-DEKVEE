@@ -9,63 +9,7 @@ import asyncio
 gemini_key = os.getenv("GEMINI_API_KEY")
 
 # ==========================================
-# 1. SISTEM TOMBOL WELCOME
-# ==========================================
-class WelcomeRoleView(discord.ui.View):
-    def __init__(self, target_member, bot):
-        super().__init__(timeout=None)
-        self.target_member = target_member
-        self.bot = bot
-        self.add_item(RoleButton("DKV", "DKV", "🎨", discord.ButtonStyle.primary))
-        self.add_item(RoleButton("Teknologi Informasi", "TEKINFO", "💻", discord.ButtonStyle.success))
-        self.add_item(RoleButton("Sistem Informasi", "SISFOR", "📊", discord.ButtonStyle.danger))
-        self.add_item(RoleButton("T. Telekomunikasi", "TEKTEL", "📡", discord.ButtonStyle.secondary))
-
-class RoleButton(discord.ui.Button):
-    def __init__(self, label, role_name, emoji, color):
-        super().__init__(label=label, style=color, emoji=emoji)
-        self.role_name = role_name
-
-    async def callback(self, interaction: discord.Interaction):
-        view: WelcomeRoleView = self.view
-        target_member = view.target_member
-        bot = view.bot
-
-        if interaction.user.id != target_member.id:
-            await interaction.response.send_message(f"⚠️ Eits, tombol ini khusus untuk {target_member.mention}!", ephemeral=True)
-            return
-
-        await interaction.response.defer(ephemeral=True)
-        role = discord.utils.get(interaction.guild.roles, name=self.role_name)
-
-        if not role:
-            await interaction.followup.send(f"⚠️ Role **{self.role_name}** belum dibuat di server!", ephemeral=True)
-            return
-
-        try:
-            await target_member.add_roles(role)
-        except discord.Forbidden:
-            await interaction.followup.send("❌ **GAGAL:** Bot tidak punya izin 'Manage Roles'.", ephemeral=True)
-            return
-
-        try:
-            await bot.pool.execute(
-                "INSERT INTO maba_roles (username, role_name) VALUES ($1, $2)",
-                target_member.name, self.role_name
-            )
-        except Exception as e:
-            print(f"[DB ERROR] Gagal input ke database: {e}")
-
-        await interaction.followup.send(f"🎉 Mantap! Kamu resmi masuk program studi **{self.role_name}**. Silakan cek private room kelasmu di sebelah kiri!", ephemeral=True)
-
-        try:
-            await interaction.message.delete()
-        except Exception:
-            pass
-
-
-# ==========================================
-# 2. SISTEM AUTO-GATE (DENGAN PENYAPU OTOMATIS)
+# 2. SISTEM AUTO-GATE (FULL OTOMATIS)
 # ==========================================
 class AutoGate(commands.Cog):
     def __init__(self, bot):
@@ -138,10 +82,8 @@ class AutoGate(commands.Cog):
         # CEGAT ORANG YANG UDAH LOLOS
         role_member = discord.utils.get(message.guild.roles, name="MEMBER")
         if role_member and role_member in message.author.roles:
-            try:
-                await message.delete()
-            except:
-                pass
+            try: await message.delete()
+            except: pass
             peringatan_lolos = await message.channel.send(
                 f"⚠️ **Eits {message.author.mention}, kamu kan udah lolos verifikasi!** Nggak perlu upload SKL atau chat di sini lagi ya. Cuss langsung beraktivitas di dalam server!"
             )
@@ -158,10 +100,8 @@ class AutoGate(commands.Cog):
 
         # JIKA BUKAN GAMBAR -> HAPUS DAN PERINGATKAN SEKALI
         if not is_valid_image:
-            try:
-                await message.delete()
-            except:
-                pass
+            try: await message.delete()
+            except: pass
             
             if message.author.id not in self.warned_users:
                 self.warned_users.add(message.author.id)
@@ -175,13 +115,10 @@ class AutoGate(commands.Cog):
         # ==========================================
         # JIKA GAMBAR VALID: BERSIHKAN RUANGAN!
         # ==========================================
-        # 1. Sapu bersih pesan "HALT!" dan pesan error sebelumnya
         async for msg in message.channel.history(limit=50):
             if msg.author == self.bot.user and message.author.mention in msg.content:
-                try:
-                    await msg.delete()
-                except:
-                    pass
+                try: await msg.delete()
+                except: pass
 
         try:
             # 2. Download Gambar
@@ -191,14 +128,12 @@ class AutoGate(commands.Cog):
                     image_data = await resp.read()
 
             # 3. Hapus foto user secara instan biar room langsung bersih
-            try:
-                await message.delete()
-            except:
-                pass
+            try: await message.delete()
+            except: pass
 
             nama_depan = message.author.display_name.split()[0]
             
-            # PROMPT DIPERTAJAM AGAR GEMINI LEBIH FOKUS
+            # PROMPT
             prompt = "Salin seluruh teks yang ada di gambar ini dengan teliti. Pastikan kamu membaca baris Program Studi, Tahun, dan Nama Kampus. Jangan berikan penjelasan."
             hasil_mentah = await self.panggil_gemini_api(prompt, image_data, attachment.content_type)
 
@@ -208,76 +143,98 @@ class AutoGate(commands.Cog):
                     "**SOLUSI:** Pastikan foto nggak blur dan teks **Nama, Prodi, Kampus, & Tahun** kelihatan jelas. Coba upload ulang gambarnya!"
                 )
             else:
-                # >>> PERBAIKAN UTAMA: BERSIHKAN TEKS DARI ENTER (\n) <<<
                 teks = " ".join(hasil_mentah.lower().split())
                 
                 syarat_kampus = "jakarta" in teks or "telkom university" in teks
                 syarat_tahun = "2026" in teks
                 
-                prodi_list = [
-                    "dkv", "desain komunikasi visual", 
-                    "teknologi informasi", "tekinfo", 
-                    "sistem informasi", "sisfor", 
-                    "telekomunikasi", "teknik telekomunikasi", "tektel"
-                ]
+                # MAPPING PRODI KE NAMA ROLE DI DISCORD
+                role_mapping = {
+                    "dkv": "DKV",
+                    "desain komunikasi visual": "DKV",
+                    "teknologi informasi": "TEKINFO",
+                    "tekinfo": "TEKINFO",
+                    "sistem informasi": "SISFOR",
+                    "sisfor": "SISFOR",
+                    "telekomunikasi": "TEKTEL",
+                    "teknik telekomunikasi": "TEKTEL",
+                    "tektel": "TEKTEL"
+                }
                 
-                # >>> PERBAIKAN 2: TANGKAP NAMA PRODI YANG KETEMU <<<
                 prodi_terdeteksi = None
-                for p in prodi_list:
-                    if p in teks:
-                        prodi_terdeteksi = p.title() # Bikin huruf depannya besar
+                role_target_name = None
+                
+                for keyword, r_name in role_mapping.items():
+                    if keyword in teks:
+                        prodi_terdeteksi = keyword.title()
+                        role_target_name = r_name
                         break
 
-                syarat_prodi = prodi_terdeteksi is not None
+                syarat_prodi = role_target_name is not None
 
                 if syarat_kampus and syarat_tahun and syarat_prodi:
                     # Kirim pesan sukses di Pos Satpam
                     acc_msg = await message.channel.send(
-                        f"✅ **Verifikasi Berhasil!** Halo **{nama_depan}** {message.author.mention}, dokumen SKL lu lolos untuk prodi **{prodi_terdeteksi}**. Cuss cek room welcome-center!"
+                        f"✅ **Verifikasi Berhasil!** Halo **{nama_depan}** {message.author.mention}, dokumen SKL lu lolos untuk prodi **{role_target_name}**. Cuss cek room welcome-center!"
                     )
-                    
-                    # Beri jeda 5 detik agar pesan terbaca
                     await asyncio.sleep(5)
-                    
-                    # 4. Hapus pesan sukses setelah dibaca
-                    try:
-                        await acc_msg.delete()
-                    except:
-                        pass
+                    try: await acc_msg.delete()
+                    except: pass
 
-                    # Berikan role MEMBER (Room pos-satpam akan otomatis tersembunyi)
-                    if role_member: await message.author.add_roles(role_member)
+                    # ==========================================
+                    # AUTO ASSIGN ROLE (MEMBER & PRODI)
+                    # ==========================================
+                    if role_member: 
+                        await message.author.add_roles(role_member)
 
-                    # Sapaan ke Welcome Center
+                    # Ambil object Role berdasarkan mapping
+                    role_prodi = discord.utils.get(message.guild.roles, name=role_target_name)
+                    if role_prodi:
+                        try:
+                            await message.author.add_roles(role_prodi)
+                        except discord.Forbidden:
+                            print(f"[ERROR] Bot tidak punya izin memberikan role {role_target_name}")
+
+                        # Otomatis catat ke Database
+                        try:
+                            await self.bot.pool.execute(
+                                "INSERT INTO maba_roles (username, role_name) VALUES ($1, $2)",
+                                message.author.name, role_target_name
+                            )
+                        except Exception as e:
+                            print(f"[DB ERROR] Gagal input ke database: {e}")
+
+                    # ==========================================
+                    # PENGUMUMAN OTOMATIS
+                    # ==========================================
+                    # Sapaan ke Welcome Center (Tanpa Tombol)
                     welcome_channel = self.bot.get_channel(self.welcome_center_id)
                     if welcome_channel:
                         embed = discord.Embed(
                             title="🎓 Welcome to Telyu Jekardah!",
                             description=(
                                 f"Helo welkam join Telyu Jekardah, kak **{nama_depan}**! {message.author.mention}\n\n"
-                                f"Sistem kami mendeteksi kamu dari prodi **{prodi_terdeteksi}**. Sebelum mulai berpetualang dan mabar, kamu **wajib mengambil role jurusanmu dulu nih.**\n\n"
-                                "👉 **Silakan klik tombol prodi kamu di bawah!**"
+                                f"Sistem berhasil membaca dokumen SKL-mu. Kamu telah otomatis diberikan Role **{role_target_name}**! 🎉\n\n"
+                                "👉 **Silakan langsung meluncur ke private room kelasmu di sebelah kiri!**"
                             ),
-                            color=discord.Color.blue()
+                            color=discord.Color.green()
                         )
                         embed.set_thumbnail(url=message.author.display_avatar.url)
-                        view = WelcomeRoleView(target_member=message.author, bot=self.bot)
-                        await welcome_channel.send(content=f"Cek di mari ngab **{nama_depan}**!", embed=embed, view=view)
+                        await welcome_channel.send(content=f"Cek di mari ngab **{nama_depan}**!", embed=embed)
                     
                     # Umumkan ke Room Chat Universal dengan Foto Profil
                     pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
                     if pengumuman_channel:
                         embed_pengumuman = discord.Embed(
                             title="🎉 MAHASISWA BARU TELAH TIBA!",
-                            description=f"Mari sambut **{nama_depan}** ({message.author.mention}) dari prodi **{prodi_terdeteksi}** yang baru aja lolos verifikasi gerbang utama!\nSelamat bergabung di kampus, jangan lupa mampir ke kantin virtual!",
+                            description=f"Mari sambut **{nama_depan}** ({message.author.mention}) dari prodi **{role_target_name}** yang baru aja lolos verifikasi gerbang utama!\nSelamat bergabung di kampus, jangan lupa mampir ke kantin virtual!",
                             color=discord.Color.gold()
                         )
                         embed_pengumuman.set_thumbnail(url=message.author.display_avatar.url)
-                        
                         await pengumuman_channel.send(embed=embed_pengumuman)
 
                 else:
-                    tolak_msg = await message.channel.send(
+                    await message.channel.send(
                         f"❌ **Verifikasi Gagal, {nama_depan}** {message.author.mention}.\n"
                         f"Dokumen lu kurang lengkap nih! Pastikan **Nama, Prodi, Kampus Jakarta, dan Tahun 2026/2027** benar-benar kelihatan di fotonya. Silakan upload ulang atau panggil Admin.\n"
                         f"📄 **Cek contoh SKL yang bener di sini:** https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing"
@@ -286,7 +243,6 @@ class AutoGate(commands.Cog):
         except Exception as e:
             await message.channel.send(f"⚠️ Waduh, sistem pusing: {e}")
         finally:
-            # Backup pengaman hapus gambar
             try: await message.delete()
             except: pass
 
