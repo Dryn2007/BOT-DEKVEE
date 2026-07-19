@@ -154,7 +154,7 @@ class StreakSystem(commands.Cog):
 
             # 5. Konfigurasi Font
             font_super = Font.poppins(size=25, variant="bold")
-            font_title = Font.poppins(size=65, variant="black")
+            font_title = Font.poppins(size=65, variant="bold")
             font_badge = Font.poppins(size=22, variant="bold")
 
             # 6. Teks Utama
