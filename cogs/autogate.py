@@ -4,12 +4,13 @@ import aiohttp
 import os
 import base64
 import asyncio
+import re  # <--- DITAMBAHKAN UNTUK MELACAK 11 ANGKA REGISTRASI
 
 # Ambil API key dari .env
 gemini_key = os.getenv("GEMINI_API_KEY")
 
 # ==========================================
-# 2. SISTEM AUTO-GATE (FULL OTOMATIS)
+# 2. SISTEM AUTO-GATE (FULL OTOMATIS & ANTI MALING)
 # ==========================================
 class AutoGate(commands.Cog):
     def __init__(self, bot):
@@ -19,8 +20,21 @@ class AutoGate(commands.Cog):
         self.welcome_center_id = 1526567698627035246
         self.pengumuman_id = 1526219303714820186
         
-        # Memory untuk mencatat siapa yang sudah pernah diperingatkan agar tidak spam
         self.warned_users = set()
+        self.is_ready = False
+
+    # Membuat Tabel Baru untuk mencatat Nomor Registrasi di Database
+    @commands.Cog.listener()
+    async def on_ready(self):
+        if not self.is_ready:
+            await self.bot.pool.execute('''
+                CREATE TABLE IF NOT EXISTS skl_registry (
+                    no_reg TEXT PRIMARY KEY,
+                    username TEXT
+                )
+            ''')
+            self.is_ready = True
+            print("✅ Tabel Keamanan SKL (skl_registry) siap!")
 
     async def panggil_gemini_api(self, prompt, image_data, mime_type):
         if not gemini_key:
@@ -65,11 +79,10 @@ class AutoGate(commands.Cog):
         if member.bot: return
         pos_satpam = self.bot.get_channel(self.pos_satpam_id)
         if pos_satpam:
-            # Pesan HALT dikirim tanpa timer, biar dihapus pas dia upload SKL
             await pos_satpam.send(
                 f"🚨 **HALT!** Berhenti di situ, {member.mention}!\n\n"
                 f"Untuk masuk, **upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
-                f"⚠️ **PENTING:** Pastikan **Nama Lengkap, Program Studi (Prodi), Kampus Jakarta**, dan tahun **2026/2027** terlihat dengan jelas ya!\n\n"
+                f"⚠️ **PENTING:** Pastikan **Nama Lengkap, Nomor Registrasi (11 Angka), Prodi, Kampus Jakarta**, dan tahun **2026/2027** terlihat dengan jelas ya!\n\n"
                 f"📄 **Cek contoh SKL yang valid di sini:** https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing\n\n"
                 f"Ssst... ruangan ini cuma buat upload gambar, jadi dilarang chat. Langsung drop fotonya aja!"
             )
@@ -79,7 +92,6 @@ class AutoGate(commands.Cog):
         if message.author.bot or message.channel.id != self.pos_satpam_id:
             return
 
-        # CEGAT ORANG YANG UDAH LOLOS
         role_member = discord.utils.get(message.guild.roles, name="MEMBER")
         if role_member and role_member in message.author.roles:
             try: await message.delete()
@@ -90,7 +102,6 @@ class AutoGate(commands.Cog):
             await peringatan_lolos.delete(delay=10)
             return
 
-        # CEK APAKAH PESAN ADALAH GAMBAR YANG VALID
         is_valid_image = False
         attachment = None
         if message.attachments:
@@ -98,7 +109,6 @@ class AutoGate(commands.Cog):
             if any(attachment.filename.lower().endswith(ext) for ext in ['png', 'jpg', 'jpeg']):
                 is_valid_image = True
 
-        # JIKA BUKAN GAMBAR -> HAPUS DAN PERINGATKAN SEKALI
         if not is_valid_image:
             try: await message.delete()
             except: pass
@@ -106,49 +116,75 @@ class AutoGate(commands.Cog):
             if message.author.id not in self.warned_users:
                 self.warned_users.add(message.author.id)
                 peringatan = await message.channel.send(
-                    f"⚠️ **Tahan {message.author.mention}!** Ruangan ini khusus buat **upload foto SKL** (jpg/png). Tolong jangan ngirim chat di mari ya.\n"
-                    f"👉 **Bingung bentuk SKL-nya? Cek contohnya di sini:** https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing"
+                    f"⚠️ **Tahan {message.author.mention}!** Ruangan ini khusus buat **upload foto SKL** (jpg/png). Tolong jangan ngirim chat di mari ya."
                 )
                 await peringatan.delete(delay=15)
             return
 
-        # ==========================================
-        # JIKA GAMBAR VALID: BERSIHKAN RUANGAN!
-        # ==========================================
         async for msg in message.channel.history(limit=50):
             if msg.author == self.bot.user and message.author.mention in msg.content:
                 try: await msg.delete()
                 except: pass
 
         try:
-            # 2. Download Gambar
             async with aiohttp.ClientSession() as session:
                 async with session.get(attachment.url) as resp:
                     if resp.status != 200: return
                     image_data = await resp.read()
 
-            # 3. Hapus foto user secara instan biar room langsung bersih
             try: await message.delete()
             except: pass
 
             nama_depan = message.author.display_name.split()[0]
+            discord_username = message.author.name # USERNAME ASLI DISCORD, BUKAN NICKNAME SERVER
             
-            # PROMPT
-            prompt = "Salin seluruh teks yang ada di gambar ini dengan teliti. Pastikan kamu membaca baris Program Studi, Tahun, dan Nama Kampus. Jangan berikan penjelasan."
+            # PROMPT KITA PERTAJAM AGAR WAJIB MEMBACA NOMOR REGISTRASI
+            prompt = "Salin seluruh teks yang ada di gambar ini dengan teliti. Pastikan kamu membaca baris Nomor Registrasi (11 angka), Program Studi, Tahun, dan Nama Kampus. Jangan berikan penjelasan."
             hasil_mentah = await self.panggil_gemini_api(prompt, image_data, attachment.content_type)
 
             if "KODE_BLOKIR_SENSOR" in hasil_mentah:
-                tolak_msg = await message.channel.send(
+                await message.channel.send(
                     f"❌ **Waduh {nama_depan}, sistem Google pusing baca dokumenmu!** {message.author.mention}\n"
-                    "**SOLUSI:** Pastikan foto nggak blur dan teks **Nama, Prodi, Kampus, & Tahun** kelihatan jelas. Coba upload ulang gambarnya!"
+                    "**SOLUSI:** Pastikan foto nggak blur dan teks kelihatan jelas. Coba upload ulang gambarnya!"
                 )
             else:
                 teks = " ".join(hasil_mentah.lower().split())
                 
+                # ==============================================================
+                # SISTEM DETEKSI DAN CEK NOMOR REGISTRASI (11 ANGKA)
+                # ==============================================================
+                # Mencari pola tepat 11 angka yang berjejer
+                match_noreg = re.search(r'\b\d{11}\b', teks)
+                
+                if not match_noreg:
+                    await message.channel.send(
+                        f"❌ **Verifikasi Gagal, {nama_depan}** {message.author.mention}.\n"
+                        f"Sistem tidak bisa menemukan **11 Angka Nomor Registrasi** di fotomu! Pastikan bagian tersebut tidak terpotong atau blur."
+                    )
+                    return
+                    
+                no_reg = match_noreg.group(0)
+                
+                # CEK APAKAH NOMOR REGISTRASI INI SUDAH PERNAH DIPAKAI SEBELUMNYA
+                record = await self.bot.pool.fetchrow("SELECT username FROM skl_registry WHERE no_reg = $1", no_reg)
+                
+                if record:
+                    if record['username'] != discord_username:
+                        # ANCAMAN TINGGI! ADA YANG MENCOBA MEMAKAI SKL ORANG LAIN
+                        await message.channel.send(
+                            f"🚨 **PELANGGARAN TERDETEKSI!** {message.author.mention}\n"
+                            f"Nomor registrasi **{no_reg}** sudah tertaut dengan akun Discord lain (`{record['username']}`). Kamu tidak bisa menggunakan Dokumen SKL milik orang lain!"
+                        )
+                        return
+                    else:
+                        pass # Jika akunnya sama (misal dia keluar lalu masuk lagi)
+
+                # ==============================================================
+                # LANJUT CEK PRODI DAN KAMPUS
+                # ==============================================================
                 syarat_kampus = "jakarta" in teks or "telkom university" in teks
                 syarat_tahun = "2026" in teks
                 
-                # MAPPING PRODI KE NAMA ROLE DI DISCORD
                 role_mapping = {
                     "dkv": "DKV",
                     "desain komunikasi visual": "DKV",
@@ -173,7 +209,6 @@ class AutoGate(commands.Cog):
                 syarat_prodi = role_target_name is not None
 
                 if syarat_kampus and syarat_tahun and syarat_prodi:
-                    # Kirim pesan sukses di Pos Satpam
                     acc_msg = await message.channel.send(
                         f"✅ **Verifikasi Berhasil!** Halo **{nama_depan}** {message.author.mention}, dokumen SKL lu lolos untuk prodi **{role_target_name}**. Cuss cek room welcome-center!"
                     )
@@ -181,33 +216,34 @@ class AutoGate(commands.Cog):
                     try: await acc_msg.delete()
                     except: pass
 
-                    # ==========================================
-                    # AUTO ASSIGN ROLE (MEMBER & PRODI)
-                    # ==========================================
                     if role_member: 
                         await message.author.add_roles(role_member)
 
-                    # Ambil object Role berdasarkan mapping
                     role_prodi = discord.utils.get(message.guild.roles, name=role_target_name)
                     if role_prodi:
                         try:
                             await message.author.add_roles(role_prodi)
                         except discord.Forbidden:
-                            print(f"[ERROR] Bot tidak punya izin memberikan role {role_target_name}")
+                            pass
 
-                        # Otomatis catat ke Database
+                        # ==============================================================
+                        # SIMPAN NOMOR REGISTRASI DAN ROLE KE DATABASE
+                        # ==============================================================
                         try:
+                            # 1. Simpan ke registry anti-maling
+                            await self.bot.pool.execute(
+                                "INSERT INTO skl_registry (no_reg, username) VALUES ($1, $2) ON CONFLICT (no_reg) DO NOTHING",
+                                no_reg, discord_username
+                            )
+                            # 2. Simpan role
                             await self.bot.pool.execute(
                                 "INSERT INTO maba_roles (username, role_name) VALUES ($1, $2)",
-                                message.author.name, role_target_name
+                                discord_username, role_target_name
                             )
                         except Exception as e:
                             print(f"[DB ERROR] Gagal input ke database: {e}")
 
-                    # ==========================================
-                    # PENGUMUMAN OTOMATIS
-                    # ==========================================
-                    # Sapaan ke Welcome Center (Tanpa Tombol)
+                    # PENGUMUMAN
                     welcome_channel = self.bot.get_channel(self.welcome_center_id)
                     if welcome_channel:
                         embed = discord.Embed(
@@ -222,7 +258,6 @@ class AutoGate(commands.Cog):
                         embed.set_thumbnail(url=message.author.display_avatar.url)
                         await welcome_channel.send(content=f"Cek di mari ngab **{nama_depan}**!", embed=embed)
                     
-                    # Umumkan ke Room Chat Universal dengan Foto Profil
                     pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
                     if pengumuman_channel:
                         embed_pengumuman = discord.Embed(
