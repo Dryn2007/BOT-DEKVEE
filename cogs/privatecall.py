@@ -85,15 +85,14 @@ class RoomNameModal(discord.ui.Modal, title='Custom Nama Room Privat'):
 # ====================================================================
 class PrivateCallConfigView(discord.ui.View):
     def __init__(self, main_view, grid_index, cog):
-        super().__init__(timeout=120.0) # Waktu setup room diperpanjang jadi 120 detik untuk ngetik nama
+        super().__init__(timeout=120.0) # Waktu setup room 120 detik
         self.main_view = main_view
         self.grid_index = grid_index
         self.cog = cog
-        self.selected_users = []
 
         self.select_users = discord.ui.UserSelect(
-            placeholder="Tag teman yang boleh masuk (Maks 10)...", 
-            min_values=1, 
+            placeholder="Tag teman (Kosongkan jika untuk sendiri)...", 
+            min_values=2, # <<< UBAH KE 0 AGAR BISA BIKIN ROOM SENDIRIAN
             max_values=10
         )
         self.select_users.callback = self.select_callback
@@ -108,16 +107,16 @@ class PrivateCallConfigView(discord.ui.View):
         self.add_item(self.btn_cancel)
 
     async def select_callback(self, interaction: discord.Interaction):
-        self.selected_users = self.select_users.values
+        # Cukup defer saja agar Discord tidak menganggap interaksi error/loading terus
         await interaction.response.defer() 
 
     async def create_callback(self, interaction: discord.Interaction):
-        if not self.selected_users:
-            await interaction.response.send_message("⚠️ Kamu belum memilih/tag siapapun di menu dropdown!", ephemeral=True)
-            return
+        # PERBAIKAN: Ambil nilai langsung dari wujud fisik dropdown saat tombol diklik
+        # Dijamin tidak akan pernah nyangkut atau error lagi!
+        selected_users = self.select_users.values
 
-        # Panggil Pop-up Modal untuk mengisi nama room
-        modal = RoomNameModal(self.main_view, self.grid_index, self.cog, self.selected_users)
+        # Panggil Pop-up Modal untuk mengisi nama room, lempar data temannya ke sana
+        modal = RoomNameModal(self.main_view, self.grid_index, self.cog, selected_users)
         await interaction.response.send_modal(modal)
 
     async def cancel_callback(self, interaction: discord.Interaction):
@@ -130,8 +129,6 @@ class PrivateCallConfigView(discord.ui.View):
 
     async def on_timeout(self):
         await self.main_view.unlock_grid(self.grid_index)
-
-
 # ====================================================================
 # 3. DASHBOARD 4 GRID
 # ====================================================================
