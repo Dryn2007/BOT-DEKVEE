@@ -144,7 +144,7 @@ class StreakSystem(commands.Cog):
         ''', prodi_name, today)
 
         # 3. Trigger saat mencapai pas 5 orang (Ubah ke 1 jika ingin ditest sendirian)
-        if count == 1:
+        if count == 5:
             record = await self.bot.pool.fetchrow('SELECT current_streak, last_active_date FROM prodi_streaks WHERE prodi_name = $1', prodi_name)
 
             new_streak = 1
