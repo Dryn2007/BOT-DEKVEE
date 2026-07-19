@@ -161,7 +161,7 @@ class StreakSystem(commands.Cog):
         if count == 2:
             record = await self.bot.pool.fetchrow('SELECT current_streak, last_active_date FROM prodi_streaks WHERE prodi_name = $1', prodi_name)
 
-            new_streak = 1
+            new_streak = 3
             lost_streak_value = 0
             streak_mati = False
 
