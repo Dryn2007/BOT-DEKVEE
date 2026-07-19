@@ -43,18 +43,31 @@ class RestoreConfirmView(discord.ui.View):
             await interaction.followup.send(f"❌ Role {self.prodi_name} tidak ditemukan di server ini.", ephemeral=True)
             return
 
-        # 1. POTONG 50% XP & LEVEL SEMUA MEMBER DI PRODI TERSEBUT
+        # 1. POTONG 50% XP & KALKULASI ULANG LEVEL SECARA AKURAT
         members_affected = 0
         for member in role.members:
             if member.bot: continue
             try:
-                # Membagi XP dan Level menjadi setengah (dibaca dari tabel levels)
-                await self.cog.bot.pool.execute('''
-                    UPDATE levels 
-                    SET xp = xp / 2, level = level / 2 
-                    WHERE user_id = $1
-                ''', member.id)
-                members_affected += 1
+                # Ambil data XP saat ini dari database
+                record = await self.cog.bot.pool.fetchrow("SELECT xp FROM levels WHERE user_id = $1", member.id)
+                if record:
+                    # Potong XP jadi setengah
+                    new_xp = int(record['xp'] / 2)
+                    
+                    # Kalkulasi ulang level yang tepat berdasarkan XP yang tersisa
+                    # Menggunakan rumus dari sistem Leveling kamu: 50 * (lvl^2)
+                    new_level = 1
+                    while 50 * (new_level ** 2) <= new_xp:
+                        new_level += 1
+                    
+                    # Update database dengan XP dan Level yang sudah valid
+                    await self.cog.bot.pool.execute('''
+                        UPDATE levels 
+                        SET xp = $1, level = $2 
+                        WHERE user_id = $3
+                    ''', new_xp, new_level, member.id)
+                    
+                    members_affected += 1
             except Exception as e:
                 print(f"[Error Restore] Gagal potong XP user {member.id}: {e}")
 
@@ -69,15 +82,12 @@ class RestoreConfirmView(discord.ui.View):
         embed = discord.Embed(
             title="🔥 STREAK BERHASIL DIPULIHKAN! 🔥",
             description=f"Ritual berhasil! Streak **{self.prodi_name}** telah kembali ke angka **{self.lost_streak} Hari**.\n\n"
-                        f"💀 *Sebagai bayarannya, {members_affected} mahasiswa {self.prodi_name} telah kehilangan 50% XP dan Level mereka.*",
+                        f"💀 *Sebagai bayarannya, {members_affected} mahasiswa {self.prodi_name} telah kehilangan 50% XP mereka (Level telah disesuaikan).* \n\n"
+                        f"*(Kalian bisa mengecek rank baru kalian dengan menggunakan command !rank)*",
             color=discord.Color.brand_red()
         )
         embed.set_footer(text="Ayo cepat chat di room prodi hari ini sebelum streak mati lagi!")
         await interaction.edit_original_response(embed=embed, view=None)
-
-    @discord.ui.button(label="Batal", style=discord.ButtonStyle.secondary)
-    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content="Ritual pemulihan dibatalkan. XP aman, tapi streak tetap hangus.", embed=None, view=None)
 
 
 class StreakSystem(commands.Cog):
