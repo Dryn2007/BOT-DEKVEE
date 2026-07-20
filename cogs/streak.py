@@ -471,6 +471,7 @@ class StreakSystem(commands.Cog):
                     await msg_pin.pin(reason="Pemberitahuan Kematian Streak")
                 except:
                     pass
+                
 
 async def setup(bot):
     await bot.add_cog(StreakSystem(bot))
