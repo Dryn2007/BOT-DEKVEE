@@ -3,6 +3,9 @@ from discord.ext import commands
 from datetime import datetime, timedelta, timezone
 import os
 import asyncio
+import requests
+from io import BytesIO
+from PIL import ImageDraw, Image
 
 # --- IMPORT PLUGIN DARI LUAR ---
 from easy_pil import Editor, Canvas, Font
@@ -212,16 +215,56 @@ class StreakSystem(commands.Cog):
             # Ambil PIL ImageDraw langsung dari canvas easy-pil untuk menggambar ikon vektor
             draw = ImageDraw.Draw(background.image)
 
+            # ==========================================
+            # PERHITUNGAN DINAMIS & RENDER IKON EKSTERNAL
+            # ==========================================
+            draw = ImageDraw.Draw(background.image)
+            pil_font = font_badge.font 
+            icon_size = 28
+            spacing = 10 # Jarak antara ikon dan teks
+
             # 7. Badge / Pill 1: STREAK API (Kapsul Oranye)
             background.rectangle((350, 150), width=260, height=60, color="#FF4500", radius=30)
             
-            # --- PANGGIL FUNGSI GAMBAR IKON API ---
-            draw_flame_icon(draw, x=375, y=165, size=28, color="#FFFFFF")
-            # Teks digeser ke X=415 dan diubah ke rata kiri, tanpa emoji
-            background.text((415, 165), f"{new_streak} DAYS STREAK", font=font_badge, color="#FFFFFF", align="left")
+            text_streak = f"{new_streak} DAYS STREAK"
+            text_streak_width = int(draw.textlength(text_streak, font=pil_font))
+            total_width_streak = icon_size + spacing + text_streak_width
+            
+            # Titik tengah X dari kapsul oranye adalah 480 (350 + (260/2))
+            start_x_streak = 480 - (total_width_streak / 2)
+            
+            # Ambil ikon Api dari Twemoji (Eksternal)
+            try:
+                res_fire = requests.get("https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/1f525.png")
+                img_fire = Image.open(BytesIO(res_fire.content)).convert("RGBA").resize((icon_size, icon_size))
+                background.image.paste(img_fire, (int(start_x_streak), 166), img_fire)
+            except: pass
+
+            # Render Teks Streak (Posisinya bergeser menyesuaikan ikon)
+            text_x_streak = start_x_streak + icon_size + spacing
+            background.text((text_x_streak, 166), text_streak, font=font_badge, color="#FFFFFF", align="left")
+
 
             # 8. Badge / Pill 2: TOTAL MESSAGES (Kapsul Abu-abu)
             background.rectangle((630, 150), width=230, height=60, color="#1A1C20", radius=30)
+            
+            text_chat = f"{total_messages} CHATS"
+            text_chat_width = int(draw.textlength(text_chat, font=pil_font))
+            total_width_chat = icon_size + spacing + text_chat_width
+            
+            # Titik tengah X dari kapsul abu-abu adalah 745 (630 + (230/2))
+            start_x_chat = 745 - (total_width_chat / 2)
+
+            # Ambil ikon Chat dari Twemoji (Eksternal)
+            try:
+                res_chat = requests.get("https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/1f4ac.png")
+                img_chat = Image.open(BytesIO(res_chat.content)).convert("RGBA").resize((icon_size, icon_size))
+                background.image.paste(img_chat, (int(start_x_chat), 166), img_chat)
+            except: pass
+
+            # Render Teks Chat
+            text_x_chat = start_x_chat + icon_size + spacing
+            background.text((text_x_chat, 166), text_chat, font=font_badge, color="#A5A7AA", align="left")
             
             # --- PANGGIL FUNGSI GAMBAR IKON CHAT ---
             draw_chat_icon(draw, x=655, y=168, size=24, color="#A5A7AA")
