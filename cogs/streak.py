@@ -149,8 +149,6 @@ class StreakSystem(commands.Cog):
 
             # 2. Hiasan Kotak Dalam & Aksen Warna
             background.rectangle((20, 20), width=860, height=310, color="#2B2D31", radius=30)
-            
-            # Garis aksen oranye di sebelah kiri (Floating Accent)
             background.rectangle((30, 50), width=12, height=250, color="#FF4500", radius=6)
 
             # 3. Garis Pemisah (Divider)
@@ -170,45 +168,59 @@ class StreakSystem(commands.Cog):
             background.text((350, 80), f"PRODI {prodi_name}", font=font_title, color="#FFFFFF")
 
             # ==========================================
-            # RENDER IKON EKSTERNAL & TEKS (VERSI STABIL)
+            # RENDER IKON EKSTERNAL & TEKS (Otomatis ke Tengah)
             # ==========================================
             icon_size = 28
+            spacing = 10
             y_pos = 165
-            # Header wajib agar request tidak diblokir Cloudflare (Error 403)
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
+            # Helper fungsi untuk hitung lebar teks dengan aman
+            def get_text_width(text, font_obj):
+                try: return font_obj.getlength(text) # Untuk Pillow versi baru
+                except AttributeError:
+                    try: return font_obj.getsize(text)[0] # Untuk Pillow versi lama
+                    except: return len(text) * 12 # Fallback kasar jika gagal
 
             # 7. Badge / Pill 1: STREAK API (Kapsul Oranye)
             background.rectangle((350, 150), width=260, height=60, color="#FF4500", radius=30)
             
-            # Koordinat paten yang sudah dipastikan rapi
-            icon_x_streak = 390
-            text_x_streak = 426
+            text_streak = f"{new_streak} DAYS STREAK"
+            width_text_streak = get_text_width(text_streak, font_badge.font)
+            total_width_streak = icon_size + spacing + width_text_streak
+            
+            # 480 adalah titik persis di tengah kapsul oranye (350 + (260/2))
+            start_x_streak = int(480 - (total_width_streak / 2))
 
             try:
-                # Ambil ikon Api dari Twemoji. Ditambah timeout agar bot tidak freeze.
                 res_fire = requests.get("https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f525.png", headers=headers, timeout=5)
                 if res_fire.status_code == 200:
                     img_fire = Editor(Image.open(BytesIO(res_fire.content)).convert("RGBA").resize((icon_size, icon_size)))
-                    background.paste(img_fire, (icon_x_streak, y_pos - 2))
+                    background.paste(img_fire, (start_x_streak, y_pos - 2))
             except: pass
 
-            background.text((text_x_streak, y_pos), f"{new_streak} DAYS STREAK", font=font_badge, color="#FFFFFF")
+            text_x_streak = int(start_x_streak + icon_size + spacing)
+            background.text((text_x_streak, y_pos), text_streak, font=font_badge, color="#FFFFFF")
 
             # 8. Badge / Pill 2: TOTAL MESSAGES (Kapsul Abu-abu)
             background.rectangle((630, 150), width=230, height=60, color="#1A1C20", radius=30)
             
-            icon_x_chat = 665
-            text_x_chat = 701
+            text_chat = f"{total_messages} CHATS"
+            width_text_chat = get_text_width(text_chat, font_badge.font)
+            total_width_chat = icon_size + spacing + width_text_chat
+            
+            # 745 adalah titik persis di tengah kapsul abu-abu (630 + (230/2))
+            start_x_chat = int(745 - (total_width_chat / 2))
 
             try:
-                # Ambil ikon Chat
                 res_chat = requests.get("https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4ac.png", headers=headers, timeout=5)
                 if res_chat.status_code == 200:
                     img_chat = Editor(Image.open(BytesIO(res_chat.content)).convert("RGBA").resize((icon_size, icon_size)))
-                    background.paste(img_chat, (icon_x_chat, y_pos - 2))
+                    background.paste(img_chat, (start_x_chat, y_pos - 2))
             except: pass
 
-            background.text((text_x_chat, y_pos), f"{total_messages} CHATS", font=font_badge, color="#A5A7AA")
+            text_x_chat = int(start_x_chat + icon_size + spacing)
+            background.text((text_x_chat, y_pos), text_chat, font=font_badge, color="#A5A7AA")
             
             # 9. Teks Hiasan Bawah
             background.text((350, 260), "Keep the fire burning and never break the streak!", font=Font.poppins(size=18, variant="italic"), color="#80848E")
@@ -423,7 +435,6 @@ class StreakSystem(commands.Cog):
                     await msg_pin.pin(reason="Pemberitahuan Kematian Streak")
                 except:
                     pass
-
 
 async def setup(bot):
     await bot.add_cog(StreakSystem(bot))
