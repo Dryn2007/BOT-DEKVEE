@@ -316,7 +316,7 @@ class StreakSystem(commands.Cog):
         ''', prodi_name, today)
 
         # TRIGGER STREAK (SET 5)
-        if count == 5:
+        if count >= 5:
             record = await self.bot.pool.fetchrow(
                 'SELECT current_streak, last_active_date, total_messages, lost_streak FROM prodi_streaks WHERE prodi_name = $1',
                 prodi_name
@@ -471,7 +471,7 @@ class StreakSystem(commands.Cog):
                     await msg_pin.pin(reason="Pemberitahuan Kematian Streak")
                 except:
                     pass
-                
+
 
 async def setup(bot):
     await bot.add_cog(StreakSystem(bot))
