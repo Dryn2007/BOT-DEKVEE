@@ -194,13 +194,6 @@ class StreakSystem(commands.Cog):
             # ==========================================
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-            # --- FIX UTAMA ---
-            # Sebelumnya kode memanggil `font_badge.font.getlength(...)`.
-            # font_badge dari Font.poppins() SUDAH berupa objek PIL.ImageFont
-            # langsung, jadi `.font` di situ mengarah ke objek core FreeType
-            # internal, bukan lebar teks — hasilnya angka ngawur (ribuan px),
-            # sehingga teks dihitung berada jauh di luar kanvas dan tidak
-            # pernah kelihatan. Panggil getlength() langsung di font_badge.
             def get_text_width(text_str):
                 try:
                     return int(font_badge.getlength(text_str))
@@ -217,10 +210,8 @@ class StreakSystem(commands.Cog):
             width_streak = get_text_width(text_streak)
             total_streak = 28 + 8 + width_streak  # 28 (lebar ikon), 8 (jarak ikon & teks)
 
-            # Titik sempurna di tengah dari area kapsul oranye
             start_x_streak = int(480 - (total_streak / 2))
 
-            # Render Ikon Api (non-blocking, lewat executor)
             img_fire = await self.fetch_icon(
                 "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f525.png", headers
             )
@@ -230,7 +221,6 @@ class StreakSystem(commands.Cog):
                 except Exception:
                     pass
 
-            # Render Teks Streak (Diberi align="left" secara eksplisit agar easy-pil tidak meleset)
             text_x_streak = start_x_streak + 28 + 8
             background.text((text_x_streak, 165), text_streak, font=font_badge, color="#FFFFFF", align="left")
 
@@ -241,10 +231,8 @@ class StreakSystem(commands.Cog):
             width_chat = get_text_width(text_chat)
             total_chat = 28 + 8 + width_chat
 
-            # Titik sempurna di tengah dari area kapsul abu-abu
             start_x_chat = int(745 - (total_chat / 2))
 
-            # Render Ikon Chat (non-blocking, lewat executor)
             img_chat = await self.fetch_icon(
                 "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4ac.png", headers
             )
@@ -254,7 +242,6 @@ class StreakSystem(commands.Cog):
                 except Exception:
                     pass
 
-            # Render Teks Chat
             text_x_chat = start_x_chat + 28 + 8
             background.text((text_x_chat, 165), text_chat, font=font_badge, color="#A5A7AA", align="left")
 
@@ -277,7 +264,6 @@ class StreakSystem(commands.Cog):
             print(f"Error Easy-Pil: {e}")
             file = discord.File(filename, filename="maskot.png")
             await ann_channel.send(content=f"🔥 PRODI {prodi_name} MENCAPAI {new_streak} HARI STREAK!", file=file)
-
 
     # ====================================================================
     # SISTEM DETEKSI CHAT HARIAN & STREAK
@@ -411,6 +397,26 @@ class StreakSystem(commands.Cog):
 
         await ctx.send(f"✅ Streak **{prodi}** berhasil disuntik menjadi **{jumlah} Hari** (Total chat asli tercatat: {real_total_messages}).")
 
+        # =========================================================
+        # FIX: MUNCULKAN EMBED NOTIFIKASI DI ROOM PRODI TERKAIT
+        # =========================================================
+        target_channel_id = None
+        for cid, pname in PRODI_ROOMS.items():
+            if pname == prodi:
+                target_channel_id = cid
+                break
+
+        if target_channel_id:
+            target_channel = self.bot.get_channel(target_channel_id)
+            if target_channel:
+                notif_embed = discord.Embed(
+                    title="🔥 API STREAK MENYALA! 🔥",
+                    description=f"Kalian luar biasa! Target ngobrol harian tercapai.\nStreak **{prodi}** hari ini aman di angka **{jumlah} Hari**!",
+                    color=discord.Color.orange()
+                )
+                await target_channel.send(embed=notif_embed)
+
+        # Kirim kartu gambar jika masuk milestone
         if jumlah in MILESTONES:
             ann_channel = self.bot.get_channel(STREAK_ANNOUNCEMENT_ID)
             if ann_channel:
@@ -496,8 +502,6 @@ class StreakSystem(commands.Cog):
         ''', prodi, today)
         
         await ctx.send(f"✅ Data tanggal aktif **{prodi}** berhasil dimundurkan ke kemarin dan riwayat chat hari ini di-reset. \nSilakan suruh 5 orang berbeda untuk chat sekarang!")
-
-                    
 
 
 async def setup(bot):
