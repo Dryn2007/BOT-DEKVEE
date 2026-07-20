@@ -9,7 +9,6 @@ from PIL import ImageDraw, Image
 
 # --- IMPORT PLUGIN DARI LUAR ---
 from easy_pil import Editor, Canvas, Font
-from PIL import ImageDraw
 
 # ====================================================================
 # KONFIGURASI STREAK API
@@ -26,40 +25,6 @@ PRODI_ROOMS = {
 
 MILESTONES = [3, 10, 30, 100, 200, 300, 400]
 WIB = timezone(timedelta(hours=7))
-
-# ====================================================================
-# HELPER: GAMBAR IKON VEKTOR MANUAL (TIDAK BUTUH FONT EMOJI)
-# ====================================================================
-def draw_flame_icon(draw: ImageDraw.ImageDraw, x: int, y: int, size: int, color: str):
-    """Menggambar ikon api sederhana menggunakan polygon (tidak bergantung pada font emoji)."""
-    s = size
-    points = [
-        (x + s * 0.50, y),
-        (x + s * 0.85, y + s * 0.40),
-        (x + s * 0.70, y + s * 0.40),
-        (x + s * 0.95, y + s * 0.78),
-        (x + s * 0.50, y + s * 1.05),
-        (x + s * 0.05, y + s * 0.78),
-        (x + s * 0.30, y + s * 0.40),
-        (x + s * 0.15, y + s * 0.40),
-    ]
-    draw.polygon(points, fill=color)
-
-
-def draw_chat_icon(draw: ImageDraw.ImageDraw, x: int, y: int, size: int, color: str):
-    """Menggambar ikon balon chat sederhana menggunakan rounded rectangle + ekor segitiga."""
-    w = size
-    h = size * 0.72
-    draw.rounded_rectangle([x, y, x + w, y + h], radius=h * 0.35, fill=color)
-    draw.polygon(
-        [
-            (x + w * 0.18, y + h - 1),
-            (x + w * 0.38, y + h - 1),
-            (x + w * 0.18, y + h * 1.35),
-        ],
-        fill=color,
-    )
-
 
 # ====================================================================
 # UI KONFIRMASI PEMULIHAN STREAK (TUMBAL XP)
@@ -154,7 +119,6 @@ class StreakSystem(commands.Cog):
                     lost_streak INTEGER DEFAULT 0
                 );
             ''')
-            # Coba tambahkan kolom total_messages jika tabel lama sudah terlanjur ada
             try:
                 await self.bot.pool.execute('ALTER TABLE prodi_streaks ADD COLUMN total_messages INTEGER DEFAULT 0;')
             except:
@@ -180,14 +144,13 @@ class StreakSystem(commands.Cog):
             return
 
         try:
-            # 1. Canvas Utama (Warna Gelap Elegan)
+            # 1. Canvas Utama
             background = Editor(Canvas((900, 350), color="#1A1C20"))
 
             # 2. Hiasan Kotak Dalam & Aksen Warna
             background.rectangle((20, 20), width=860, height=310, color="#2B2D31", radius=30)
             
             # Garis aksen oranye di sebelah kiri (Floating Accent)
-            # Radius dibuat kecil (6) agar sesuai dengan lebarnya (12)
             background.rectangle((30, 50), width=12, height=250, color="#FF4500", radius=6)
 
             # 3. Garis Pemisah (Divider)
@@ -206,22 +169,14 @@ class StreakSystem(commands.Cog):
             background.text((350, 50), "MILESTONE UNLOCKED!", font=font_super, color="#FFD700")
             background.text((350, 80), f"PRODI {prodi_name}", font=font_title, color="#FFFFFF")
 
-            # Ambil PIL ImageDraw langsung dari canvas easy-pil untuk menggambar ikon vektor
-            draw = ImageDraw.Draw(background.image)
-
-            # Ambil PIL ImageDraw langsung dari canvas easy-pil untuk menggambar ikon vektor
-            draw = ImageDraw.Draw(background.image)
-
-            # Ambil PIL ImageDraw langsung dari canvas easy-pil untuk menggambar ikon vektor
-            draw = ImageDraw.Draw(background.image)
-
             # ==========================================
             # PERHITUNGAN DINAMIS & RENDER IKON EKSTERNAL
             # ==========================================
             draw = ImageDraw.Draw(background.image)
             pil_font = font_badge.font 
             icon_size = 28
-            spacing = 10 # Jarak antara ikon dan teks
+            spacing = 8 # Jarak antara ikon dan teks
+            y_pos = 165 # Titik y tetap
 
             # 7. Badge / Pill 1: STREAK API (Kapsul Oranye)
             background.rectangle((350, 150), width=260, height=60, color="#FF4500", radius=30)
@@ -230,20 +185,22 @@ class StreakSystem(commands.Cog):
             text_streak_width = int(draw.textlength(text_streak, font=pil_font))
             total_width_streak = icon_size + spacing + text_streak_width
             
-            # Titik tengah X dari kapsul oranye adalah 480 (350 + (260/2))
-            start_x_streak = 480 - (total_width_streak / 2)
+            # Titik tengah X dari kapsul oranye adalah 480
+            # Bungkus dengan int() agar tidak terjadi error desimal pada easy-pil
+            start_x_streak = int(480 - (total_width_streak / 2))
             
-            # Ambil ikon Api dari Twemoji (Eksternal)
+            # Ambil ikon Api dari Twemoji (Link Cloudflare yang stabil)
             try:
-                res_fire = requests.get("https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/1f525.png")
-                img_fire = Image.open(BytesIO(res_fire.content)).convert("RGBA").resize((icon_size, icon_size))
-                background.image.paste(img_fire, (int(start_x_streak), 166), img_fire)
+                res_fire = requests.get("https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f525.png")
+                if res_fire.status_code == 200:
+                    img_fire = Image.open(BytesIO(res_fire.content)).convert("RGBA").resize((icon_size, icon_size))
+                    # Y - 1 agar sejajar mantap dengan tinggi font
+                    background.image.paste(img_fire, (start_x_streak, y_pos - 1), img_fire)
             except: pass
 
-            # Render Teks Streak (Posisinya bergeser menyesuaikan ikon)
-            text_x_streak = start_x_streak + icon_size + spacing
-            background.text((text_x_streak, 166), text_streak, font=font_badge, color="#FFFFFF", align="left")
-
+            # Render Teks Streak 
+            text_x_streak = int(start_x_streak + icon_size + spacing)
+            background.text((text_x_streak, y_pos), text_streak, font=font_badge, color="#FFFFFF", align="left")
 
             # 8. Badge / Pill 2: TOTAL MESSAGES (Kapsul Abu-abu)
             background.rectangle((630, 150), width=230, height=60, color="#1A1C20", radius=30)
@@ -252,25 +209,21 @@ class StreakSystem(commands.Cog):
             text_chat_width = int(draw.textlength(text_chat, font=pil_font))
             total_width_chat = icon_size + spacing + text_chat_width
             
-            # Titik tengah X dari kapsul abu-abu adalah 745 (630 + (230/2))
-            start_x_chat = 745 - (total_width_chat / 2)
+            # Titik tengah X dari kapsul abu-abu adalah 745
+            start_x_chat = int(745 - (total_width_chat / 2))
 
-            # Ambil ikon Chat dari Twemoji (Eksternal)
+            # Ambil ikon Chat dari Twemoji
             try:
-                res_chat = requests.get("https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/1f4ac.png")
-                img_chat = Image.open(BytesIO(res_chat.content)).convert("RGBA").resize((icon_size, icon_size))
-                background.image.paste(img_chat, (int(start_x_chat), 166), img_chat)
+                res_chat = requests.get("https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4ac.png")
+                if res_chat.status_code == 200:
+                    img_chat = Image.open(BytesIO(res_chat.content)).convert("RGBA").resize((icon_size, icon_size))
+                    background.image.paste(img_chat, (start_x_chat, y_pos - 1), img_chat)
             except: pass
 
             # Render Teks Chat
-            text_x_chat = start_x_chat + icon_size + spacing
-            background.text((text_x_chat, 166), text_chat, font=font_badge, color="#A5A7AA", align="left")
+            text_x_chat = int(start_x_chat + icon_size + spacing)
+            background.text((text_x_chat, y_pos), text_chat, font=font_badge, color="#A5A7AA", align="left")
             
-            # --- PANGGIL FUNGSI GAMBAR IKON CHAT ---
-            draw_chat_icon(draw, x=655, y=168, size=24, color="#A5A7AA")
-            # Teks digeser ke X=695 dan diubah ke rata kiri, tanpa emoji
-            background.text((695, 165), f"{total_messages} CHATS", font=font_badge, color="#A5A7AA", align="left")
-
             # 9. Teks Hiasan Bawah
             background.text((350, 260), "Keep the fire burning and never break the streak!", font=Font.poppins(size=18, variant="italic"), color="#80848E")
 
@@ -329,8 +282,6 @@ class StreakSystem(commands.Cog):
 
         # TRIGGER STREAK (SET 5)
         if count == 5:
-            # FIX: tambahkan 'lost_streak' ke SELECT, sebelumnya tidak diambil
-            # sehingga record.get('lost_streak', 0) selalu balik ke 0.
             record = await self.bot.pool.fetchrow(
                 'SELECT current_streak, last_active_date, total_messages, lost_streak FROM prodi_streaks WHERE prodi_name = $1',
                 prodi_name
@@ -410,7 +361,6 @@ class StreakSystem(commands.Cog):
 
         today = datetime.now(WIB).date()
 
-        # FIX: ambil total_messages ASLI yang sudah tercatat, bukan dummy (jumlah * 125)
         existing = await self.bot.pool.fetchrow(
             'SELECT total_messages FROM prodi_streaks WHERE prodi_name = $1', prodi
         )
@@ -423,8 +373,6 @@ class StreakSystem(commands.Cog):
             SET current_streak = EXCLUDED.current_streak,
                 last_active_date = EXCLUDED.last_active_date
         ''', prodi, jumlah, today, real_total_messages)
-        # Catatan: total_messages SENGAJA tidak ikut di-overwrite di klausa UPDATE,
-        # supaya command ini tidak menimpa angka chat asli yang sudah terkumpul.
 
         await ctx.send(f"✅ Streak **{prodi}** berhasil disuntik menjadi **{jumlah} Hari** (Total chat asli tercatat: {real_total_messages}).")
 
