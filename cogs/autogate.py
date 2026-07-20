@@ -5,9 +5,48 @@ import os
 import base64
 import asyncio
 import re
+import time
+from collections import deque
 
 # Ambil API key dari .env
 gemini_key = os.getenv("GEMINI_API_KEY")
+
+
+# ==========================================
+# 1. RATE LIMITER (SLIDING WINDOW)
+# ==========================================
+class RateLimiter:
+    """
+    Sliding-window rate limiter.
+    max_calls per period (detik). Kalau limit tercapai, request akan menunggu
+    (await) sampai ada slot kosong, bukan langsung error.
+    """
+    def __init__(self, max_calls: int, period: float = 60.0):
+        self.max_calls = max_calls
+        self.period = period
+        self.calls = deque()
+        self.lock = asyncio.Lock()
+
+    async def acquire(self):
+        async with self.lock:
+            now = time.monotonic()
+            # buang catatan panggilan yang sudah lewat dari periode (60 detik)
+            while self.calls and now - self.calls[0] > self.period:
+                self.calls.popleft()
+
+            if len(self.calls) >= self.max_calls:
+                # hitung berapa lama harus nunggu sampai slot pertama expired
+                wait_time = self.period - (now - self.calls[0])
+                if wait_time > 0:
+                    print(f"⏳ Rate limit tercapai, menunggu {wait_time:.1f}s...")
+                    await asyncio.sleep(wait_time)
+                # bersihkan lagi setelah nunggu
+                now = time.monotonic()
+                while self.calls and now - self.calls[0] > self.period:
+                    self.calls.popleft()
+
+            self.calls.append(time.monotonic())
+
 
 # ==========================================
 # 2. SISTEM AUTO-GATE (FULL OTOMATIS & ANTI MALING)
@@ -19,9 +58,13 @@ class AutoGate(commands.Cog):
         self.pos_satpam_id = 1526900951678587013
         self.welcome_center_id = 1526567698627035246
         self.pengumuman_id = 1526219303714820186
-        
+
         self.warned_users = set()
         self.is_ready = False
+
+        # Batasi ke 12 RPM (bukan 15) sebagai safety margin,
+        # supaya nggak mepet banget ke limit resmi Google (Free Tier = 15 RPM)
+        self.gemini_limiter = RateLimiter(max_calls=12, period=60.0)
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -38,7 +81,10 @@ class AutoGate(commands.Cog):
     async def panggil_gemini_api(self, prompt, image_data, mime_type):
         if not gemini_key:
             raise Exception("API Key Gemini belum terbaca!")
-        
+
+        # Tunggu slot rate limit sebelum request ke Gemini
+        await self.gemini_limiter.acquire()
+
         clean_key = gemini_key.strip()
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={clean_key}"
         base64_image = base64.b64encode(image_data).decode('utf-8')
@@ -60,9 +106,19 @@ class AutoGate(commands.Cog):
 
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload) as resp:
-                if resp.status != 200:
+                if resp.status == 429:
+                    # Kena rate limit dari Google, tunggu lalu retry sekali
+                    print("⚠️ Kena 429 dari Gemini, retry dalam 10 detik...")
+                    await asyncio.sleep(10)
+                    async with session.post(url, json=payload) as resp2:
+                        if resp2.status != 200:
+                            raise Exception(f"API Error {resp2.status} (setelah retry)")
+                        data = await resp2.json()
+                elif resp.status != 200:
                     raise Exception(f"API Error {resp.status}")
-                data = await resp.json()
+                else:
+                    data = await resp.json()
+
                 kandidat = data.get('candidates', [{}])[0]
 
                 if kandidat.get('finishReason') in ['PROHIBITED_CONTENT', 'SAFETY']:
@@ -118,7 +174,7 @@ class AutoGate(commands.Cog):
         if not is_valid_image:
             try: await message.delete()
             except: pass
-            
+
             if message.author.id not in self.warned_users:
                 self.warned_users.add(message.author.id)
                 peringatan = await message.channel.send(
@@ -143,8 +199,8 @@ class AutoGate(commands.Cog):
             except: pass
 
             nama_depan = message.author.display_name.split()[0]
-            discord_username = message.author.name 
-            
+            discord_username = message.author.name
+
             prompt = "Salin seluruh teks yang ada di gambar ini dengan teliti. Pastikan kamu membaca baris Nomor Registrasi (11 angka), Program Studi, Tahun, dan Nama Kampus. Jangan berikan penjelasan."
             hasil_mentah = await self.panggil_gemini_api(prompt, image_data, attachment.content_type)
 
@@ -160,10 +216,10 @@ class AutoGate(commands.Cog):
 
             else:
                 teks = " ".join(hasil_mentah.lower().split())
-                
+
                 # Cek 11 Angka
                 match_noreg = re.search(r'\b\d{11}\b', teks)
-                
+
                 if not match_noreg:
                     err_msg = await message.channel.send(
                         f"❌ **Verifikasi Gagal, {nama_depan}** {message.author.mention}.\n"
@@ -174,12 +230,12 @@ class AutoGate(commands.Cog):
                     except: pass
                     await self.send_halt_message(message.channel, message.author, is_retry=True)
                     return
-                    
+
                 no_reg = match_noreg.group(0)
-                
+
                 # Cek Database
                 record = await self.bot.pool.fetchrow("SELECT username FROM skl_registry WHERE no_reg = $1", no_reg)
-                
+
                 if record:
                     if record['username'] != discord_username:
                         err_msg = await message.channel.send(
@@ -192,12 +248,12 @@ class AutoGate(commands.Cog):
                         await self.send_halt_message(message.channel, message.author, is_retry=True)
                         return
                     else:
-                        pass 
+                        pass
 
                 # Cek Prodi dan Kampus
                 syarat_kampus = "jakarta" in teks or "telkom university" in teks
                 syarat_tahun = "2026" in teks
-                
+
                 role_mapping = {
                     "dkv": "DKV",
                     "desain komunikasi visual": "DKV",
@@ -209,10 +265,10 @@ class AutoGate(commands.Cog):
                     "teknik telekomunikasi": "TEKTEL",
                     "tektel": "TEKTEL"
                 }
-                
+
                 prodi_terdeteksi = None
                 role_target_name = None
-                
+
                 for keyword, r_name in role_mapping.items():
                     if keyword in teks:
                         prodi_terdeteksi = keyword.title()
@@ -229,7 +285,7 @@ class AutoGate(commands.Cog):
                     try: await acc_msg.delete()
                     except: pass
 
-                    if role_member: 
+                    if role_member:
                         await message.author.add_roles(role_member)
 
                     role_prodi = discord.utils.get(message.guild.roles, name=role_target_name)
@@ -264,7 +320,7 @@ class AutoGate(commands.Cog):
                         )
                         embed.set_thumbnail(url=message.author.display_avatar.url)
                         await welcome_channel.send(content=f"Cek di mari ngab **{nama_depan}**!", embed=embed)
-                    
+
                     pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
                     if pengumuman_channel:
                         embed_pengumuman = discord.Embed(
@@ -296,6 +352,7 @@ class AutoGate(commands.Cog):
         finally:
             try: await message.delete()
             except: pass
+
 
 async def setup(bot):
     await bot.add_cog(AutoGate(bot))
