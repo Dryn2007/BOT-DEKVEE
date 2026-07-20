@@ -472,6 +472,33 @@ class StreakSystem(commands.Cog):
                 except:
                     pass
 
+    @commands.command()
+    @commands.has_permissions(administrator=True)
+    async def resetdate(self, ctx, prodi: str = None):
+        """Command sementara untuk mereset hari ke 'kemarin' agar bisa ditest organik."""
+        if not prodi: return
+        prodi = prodi.upper()
+        
+        yesterday = datetime.now(WIB).date() - timedelta(days=1)
+        today = datetime.now(WIB).date()
+        
+        # 1. Mundurkan tanggal aktif streak ke kemarin
+        await self.bot.pool.execute('''
+            UPDATE prodi_streaks 
+            SET last_active_date = $1 
+            WHERE prodi_name = $2
+        ''', yesterday, prodi)
+        
+        # 2. Hapus history orang yang sudah chat hari ini agar hitungan kembali dari 0
+        await self.bot.pool.execute('''
+            DELETE FROM daily_chatters 
+            WHERE prodi_name = $1 AND chat_date = $2
+        ''', prodi, today)
+        
+        await ctx.send(f"✅ Data tanggal aktif **{prodi}** berhasil dimundurkan ke kemarin dan riwayat chat hari ini di-reset. \nSilakan suruh 5 orang berbeda untuk chat sekarang!")
+
+                    
+
 
 async def setup(bot):
     await bot.add_cog(StreakSystem(bot))
