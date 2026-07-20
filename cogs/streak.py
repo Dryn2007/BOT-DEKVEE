@@ -182,7 +182,10 @@ class StreakSystem(commands.Cog):
 
             # 2. Hiasan Kotak Dalam & Aksen Warna
             background.rectangle((20, 20), width=860, height=310, color="#2B2D31", radius=30)
-            background.rectangle((20, 20), width=20, height=310, color="#FF4500", radius=30)
+            
+            # Garis aksen oranye di sebelah kiri (Floating Accent)
+            # Radius dibuat kecil (6) agar sesuai dengan lebarnya (12)
+            background.rectangle((30, 50), width=12, height=250, color="#FF4500", radius=6)
 
             # 3. Garis Pemisah (Divider)
             background.rectangle((350, 115), width=500, height=3, color="#1A1C20", radius=2)
