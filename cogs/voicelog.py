@@ -16,6 +16,14 @@ PRODI_ROLE_IDS = [
     1526566818024783872  # Ganti dengan ID Role Prodi TEKTEL
 ]
 
+# ====================================================================
+# KATEGORI ROOM PRIVAT (HARUS SAMA PERSIS DENGAN CATEGORY_PRIVAT_ID
+# di file privatecall.py) — dipakai untuk MENGECUALIKAN room privat
+# dari sistem log panggilan.
+# ====================================================================
+PRIVATE_CALL_CATEGORY_ID = 1528284380022313011
+
+
 class VoiceLog(commands.Cog):
     def __init__(self, bot, pool):
         self.bot = bot
@@ -41,6 +49,8 @@ class VoiceLog(commands.Cog):
     async def sync_active_sessions(self):
         for guild in self.bot.guilds:
             for vc in guild.voice_channels:
+                if self._is_private_call(vc):
+                    continue  # jangan sinkronkan room privat
                 for member in vc.members:
                     if not member.bot and member.id not in self.voice_sessions:
                         self.voice_sessions[member.id] = {
@@ -52,6 +62,14 @@ class VoiceLog(commands.Cog):
     def get_today_date(self):
         return datetime.now().strftime('%Y-%m-%d')
 
+    # ------------------------------------------------------------
+    # Helper: cek apakah sebuah channel adalah room privat (auto-call)
+    # ------------------------------------------------------------
+    def _is_private_call(self, channel):
+        if channel is None:
+            return False
+        return getattr(channel, "category_id", None) == PRIVATE_CALL_CATEGORY_ID
+
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
         if member.bot:
@@ -59,29 +77,36 @@ class VoiceLog(commands.Cog):
 
         # JIKA USER KELUAR VC ATAU PINDAH VC
         if before.channel is not None and before.channel != after.channel:
-            if member.id in self.voice_sessions:
-                session = self.voice_sessions.pop(member.id)
-                durasi_sesi = (datetime.now() - session["start_time"]).total_seconds()
-                tanggal_hari_ini = self.get_today_date()
-                
-                # --- INTEGRASI LEVELING ---
-                leveling_cog = self.bot.get_cog('Leveling')
-                if leveling_cog:
-                    xp_to_add = int(durasi_sesi // 120) 
-                    if xp_to_add > 0:
-                        await leveling_cog.give_xp(member.id, xp_to_add, member)
-                
-                await self.pool.execute(
-                    "INSERT INTO history (tanggal, channel_id, user_id, durasi) VALUES ($1, $2, $3, $4)", 
-                    tanggal_hari_ini, session["channel_id"], member.id, durasi_sesi
-                )
+            # Lewati pencatatan kalau channel asal adalah room privat
+            if not self._is_private_call(before.channel):
+                if member.id in self.voice_sessions:
+                    session = self.voice_sessions.pop(member.id)
+                    durasi_sesi = (datetime.now() - session["start_time"]).total_seconds()
+                    tanggal_hari_ini = self.get_today_date()
+                    
+                    # --- INTEGRASI LEVELING ---
+                    leveling_cog = self.bot.get_cog('Leveling')
+                    if leveling_cog:
+                        xp_to_add = int(durasi_sesi // 120) 
+                        if xp_to_add > 0:
+                            await leveling_cog.give_xp(member.id, xp_to_add, member)
+                    
+                    await self.pool.execute(
+                        "INSERT INTO history (tanggal, channel_id, user_id, durasi) VALUES ($1, $2, $3, $4)", 
+                        tanggal_hari_ini, session["channel_id"], member.id, durasi_sesi
+                    )
+            else:
+                # Kalau memang ada sesi nyasar tercatat utk room privat, buang saja tanpa disimpan
+                self.voice_sessions.pop(member.id, None)
 
         # JIKA USER MASUK VC ATAU PINDAH VC
         if after.channel is not None and before.channel != after.channel:
-            self.voice_sessions[member.id] = {
-                "start_time": datetime.now(),
-                "channel_id": after.channel.id
-            }
+            # Jangan mulai sesi tracking kalau tujuan adalah room privat
+            if not self._is_private_call(after.channel):
+                self.voice_sessions[member.id] = {
+                    "start_time": datetime.now(),
+                    "channel_id": after.channel.id
+                }
 
     # >>> SISTEM FILTERING & PENGECEKAN ROLE AMAN <<<
     def build_embed(self, guild, requester, judul, data_durasi, real_time_sessions=None):
@@ -116,12 +141,18 @@ class VoiceLog(commands.Cog):
 
         for chan_id, users in data_durasi.items():
             channel = guild.get_channel(chan_id)
-            
+
+            # FILTER 0: Lewati kalau channel sudah tidak ada (kemungkinan besar
+            # room privat yang sudah dihapus otomatis) ATAU channel tersebut
+            # ada di kategori room privat.
+            if channel is None or self._is_private_call(channel):
+                continue
+
             # FILTER 1: Lewati channel yang tidak bisa dilihat oleh requester (Kecuali Admin)
-            if not is_admin and channel and not channel.permissions_for(requester).view_channel:
+            if not is_admin and not channel.permissions_for(requester).view_channel:
                 continue
                 
-            channel_name = channel.name if channel else f"Channel ({chan_id})"
+            channel_name = channel.name
             sorted_users = sorted(users.items(), key=lambda x: x[1], reverse=True)
             teks_channel = ""
             count = 0
