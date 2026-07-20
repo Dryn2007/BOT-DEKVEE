@@ -5,7 +5,7 @@ import os
 import asyncio
 import requests
 from io import BytesIO
-from PIL import ImageDraw, Image
+from PIL import Image
 
 # --- IMPORT PLUGIN DARI LUAR ---
 from easy_pil import Editor, Canvas, Font
@@ -170,59 +170,45 @@ class StreakSystem(commands.Cog):
             background.text((350, 80), f"PRODI {prodi_name}", font=font_title, color="#FFFFFF")
 
             # ==========================================
-            # PERHITUNGAN DINAMIS & RENDER IKON EKSTERNAL
+            # RENDER IKON EKSTERNAL & TEKS (VERSI STABIL)
             # ==========================================
-            draw = ImageDraw.Draw(background.image)
-            pil_font = font_badge.font 
             icon_size = 28
-            spacing = 8 # Jarak antara ikon dan teks
-            y_pos = 165 # Titik y tetap
+            y_pos = 165
+            # Header wajib agar request tidak diblokir Cloudflare (Error 403)
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
             # 7. Badge / Pill 1: STREAK API (Kapsul Oranye)
             background.rectangle((350, 150), width=260, height=60, color="#FF4500", radius=30)
             
-            text_streak = f"{new_streak} DAYS STREAK"
-            text_streak_width = int(draw.textlength(text_streak, font=pil_font))
-            total_width_streak = icon_size + spacing + text_streak_width
-            
-            # Titik tengah X dari kapsul oranye adalah 480
-            # Bungkus dengan int() agar tidak terjadi error desimal pada easy-pil
-            start_x_streak = int(480 - (total_width_streak / 2))
-            
-            # Ambil ikon Api dari Twemoji (Link Cloudflare yang stabil)
+            # Koordinat paten yang sudah dipastikan rapi
+            icon_x_streak = 390
+            text_x_streak = 426
+
             try:
-                res_fire = requests.get("https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f525.png")
+                # Ambil ikon Api dari Twemoji. Ditambah timeout agar bot tidak freeze.
+                res_fire = requests.get("https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f525.png", headers=headers, timeout=5)
                 if res_fire.status_code == 200:
-                    img_fire = Image.open(BytesIO(res_fire.content)).convert("RGBA").resize((icon_size, icon_size))
-                    # Y - 1 agar sejajar mantap dengan tinggi font
-                    background.image.paste(img_fire, (start_x_streak, y_pos - 1), img_fire)
+                    img_fire = Editor(Image.open(BytesIO(res_fire.content)).convert("RGBA").resize((icon_size, icon_size)))
+                    background.paste(img_fire, (icon_x_streak, y_pos - 2))
             except: pass
 
-            # Render Teks Streak 
-            text_x_streak = int(start_x_streak + icon_size + spacing)
-            background.text((text_x_streak, y_pos), text_streak, font=font_badge, color="#FFFFFF", align="left")
+            background.text((text_x_streak, y_pos), f"{new_streak} DAYS STREAK", font=font_badge, color="#FFFFFF")
 
             # 8. Badge / Pill 2: TOTAL MESSAGES (Kapsul Abu-abu)
             background.rectangle((630, 150), width=230, height=60, color="#1A1C20", radius=30)
             
-            text_chat = f"{total_messages} CHATS"
-            text_chat_width = int(draw.textlength(text_chat, font=pil_font))
-            total_width_chat = icon_size + spacing + text_chat_width
-            
-            # Titik tengah X dari kapsul abu-abu adalah 745
-            start_x_chat = int(745 - (total_width_chat / 2))
+            icon_x_chat = 665
+            text_x_chat = 701
 
-            # Ambil ikon Chat dari Twemoji
             try:
-                res_chat = requests.get("https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4ac.png")
+                # Ambil ikon Chat
+                res_chat = requests.get("https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4ac.png", headers=headers, timeout=5)
                 if res_chat.status_code == 200:
-                    img_chat = Image.open(BytesIO(res_chat.content)).convert("RGBA").resize((icon_size, icon_size))
-                    background.image.paste(img_chat, (start_x_chat, y_pos - 1), img_chat)
+                    img_chat = Editor(Image.open(BytesIO(res_chat.content)).convert("RGBA").resize((icon_size, icon_size)))
+                    background.paste(img_chat, (icon_x_chat, y_pos - 2))
             except: pass
 
-            # Render Teks Chat
-            text_x_chat = int(start_x_chat + icon_size + spacing)
-            background.text((text_x_chat, y_pos), text_chat, font=font_badge, color="#A5A7AA", align="left")
+            background.text((text_x_chat, y_pos), f"{total_messages} CHATS", font=font_badge, color="#A5A7AA")
             
             # 9. Teks Hiasan Bawah
             background.text((350, 260), "Keep the fire burning and never break the streak!", font=Font.poppins(size=18, variant="italic"), color="#80848E")
@@ -243,6 +229,7 @@ class StreakSystem(commands.Cog):
             print(f"Error Easy-Pil: {e}")
             file = discord.File(filename, filename="maskot.png")
             await ann_channel.send(content=f"🔥 PRODI {prodi_name} MENCAPAI {new_streak} HARI STREAK!", file=file)
+
 
     # ====================================================================
     # SISTEM DETEKSI CHAT HARIAN & STREAK
@@ -383,7 +370,7 @@ class StreakSystem(commands.Cog):
                 await self.kirim_kartu_pengumuman(ann_channel, prodi, jumlah, real_total_messages, filename)
 
     # ====================================================================
-    # COMMAND: MATIKAN STREAK & KEMBALIKAN XP (SAMA SEPERTI SEBELUMNYA)
+    # COMMAND: MATIKAN STREAK & KEMBALIKAN XP
     # ====================================================================
     @commands.command()
     @commands.has_permissions(administrator=True)
