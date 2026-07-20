@@ -134,12 +134,31 @@ class AutoGate(commands.Cog):
     # ==============================================================
     async def send_halt_message(self, channel, member, is_retry=False):
         sapaan = "Ayo coba lagi" if is_retry else "Berhenti di situ"
+
+        embed = discord.Embed(
+            title="📲 Cara Upload SKL",
+            description=(
+                "1️⃣ Klik ikon **(+)** di pojok kiri bawah kolom chat (lihat gambar)\n"
+                "2️⃣ Pilih **Upload a File**\n"
+                "3️⃣ Cari & pilih foto SKL kamu dari galeri/file manager, lalu kirim"
+            ),
+            color=discord.Color.blurple()
+        )
+        embed.set_image(url="attachment://tutorial_upload.png")
+
+        file = discord.File("assets/tutorial_upload.png", filename="tutorial_upload.png")
+
         await channel.send(
-            f"🚨 **HALT!** {sapaan}, {member.mention}!\n\n"
-            f"Untuk masuk, **upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
-            f"⚠️ **PENTING:** Pastikan **Nama Lengkap, Nomor Registrasi (11 Angka), Prodi, Kampus Jakarta**, dan tahun **2026/2027** terlihat dengan jelas ya!\n\n"
-            f"📄 **Cek contoh SKL yang valid di sini:** https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing\n\n"
-            f"Ssst... ruangan ini cuma buat upload gambar, jadi dilarang chat. Langsung drop fotonya aja!"
+            content=(
+                f"🚨 **HALT!** {sapaan}, {member.mention}!\n\n"
+                f"Untuk masuk, **upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
+                f"⚠️ **PENTING:** Pastikan **Nama Lengkap, Nomor Registrasi (11 Angka), Prodi, Kampus Jakarta**, dan tahun **2026/2027** terlihat dengan jelas ya!\n\n"
+                f"📄 **Link Drive di bawah ini CUMA buat LIHAT CONTOH format SKL yang valid, BUKAN tempat upload ya:**\n"
+                f"https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing\n\n"
+                f"Ssst... ruangan ini cuma buat upload gambar, jadi dilarang chat. Langsung drop fotonya aja!"
+            ),
+            embed=embed,
+            file=file
         )
 
     @commands.Cog.listener()
@@ -178,7 +197,8 @@ class AutoGate(commands.Cog):
             if message.author.id not in self.warned_users:
                 self.warned_users.add(message.author.id)
                 peringatan = await message.channel.send(
-                    f"⚠️ **Tahan {message.author.mention}!** Ruangan ini khusus buat **upload foto SKL** (jpg/png). Tolong jangan ngirim chat di mari ya."
+                    f"⚠️ **Tahan {message.author.mention}!** Ruangan ini khusus buat **upload foto SKL** (jpg/png). Tolong jangan ngirim chat di mari ya.\n"
+                    f"📲 Klik ikon **(+)** di pojok kiri bawah kolom chat buat upload fotonya."
                 )
                 await peringatan.delete(delay=5)
             return
@@ -334,8 +354,7 @@ class AutoGate(commands.Cog):
                 else:
                     err_msg = await message.channel.send(
                         f"❌ **Verifikasi Gagal, {nama_depan}** {message.author.mention}.\n"
-                        f"Dokumen lu kurang lengkap nih! Pastikan **Nama, Prodi, Kampus Jakarta, dan Tahun 2026/2027** benar-benar kelihatan di fotonya. Silakan upload ulang atau panggil Admin.\n"
-                        f"📄 **Cek contoh SKL yang bener di sini:** https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing"
+                        f"Dokumen lu kurang lengkap nih! Pastikan **Nama, Prodi, Kampus Jakarta, dan Tahun 2026/2027** benar-benar kelihatan di fotonya. Silakan upload ulang atau panggil Admin."
                     )
                     await asyncio.sleep(5)
                     try: await err_msg.delete()
