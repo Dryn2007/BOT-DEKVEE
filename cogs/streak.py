@@ -206,6 +206,9 @@ class StreakSystem(commands.Cog):
             # Ambil PIL ImageDraw langsung dari canvas easy-pil untuk menggambar ikon vektor
             draw = ImageDraw.Draw(background.image)
 
+            # Ambil PIL ImageDraw langsung dari canvas easy-pil untuk menggambar ikon vektor
+            draw = ImageDraw.Draw(background.image)
+
             # 7. Badge / Pill 1: STREAK API (Kapsul Oranye)
             # Lebar ditambah menjadi 260 agar muat untuk teks yang panjang
             background.rectangle((350, 150), width=260, height=60, color="#FF4500", radius=30)
