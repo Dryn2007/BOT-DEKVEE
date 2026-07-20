@@ -168,59 +168,63 @@ class StreakSystem(commands.Cog):
             background.text((350, 80), f"PRODI {prodi_name}", font=font_title, color="#FFFFFF")
 
             # ==========================================
-            # RENDER IKON EKSTERNAL & TEKS (Otomatis ke Tengah)
+            # RENDER IKON & TEKS TENGAH (ANTI-CRASH)
             # ==========================================
-            icon_size = 28
-            spacing = 10
-            y_pos = 165
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-
-            # Helper fungsi untuk hitung lebar teks dengan aman
-            def get_text_width(text, font_obj):
-                try: return font_obj.getlength(text) # Untuk Pillow versi baru
-                except AttributeError:
-                    try: return font_obj.getsize(text)[0] # Untuk Pillow versi lama
-                    except: return len(text) * 12 # Fallback kasar jika gagal
+            
+            # Fungsi pelindung ganda untuk mengukur teks (apapun versi OS server kamu, ini aman)
+            def get_text_width(text_str):
+                try:
+                    return int(font_badge.font.getlength(text_str))
+                except Exception:
+                    try:
+                        return int(font_badge.font.getsize(text_str)[0])
+                    except Exception:
+                        return int(len(text_str) * 14) # Fallback terakhir jika semua gagal
 
             # 7. Badge / Pill 1: STREAK API (Kapsul Oranye)
             background.rectangle((350, 150), width=260, height=60, color="#FF4500", radius=30)
             
             text_streak = f"{new_streak} DAYS STREAK"
-            width_text_streak = get_text_width(text_streak, font_badge.font)
-            total_width_streak = icon_size + spacing + width_text_streak
+            width_streak = get_text_width(text_streak)
+            total_streak = 28 + 8 + width_streak # 28 (lebar ikon), 8 (jarak ikon & teks)
             
-            # 480 adalah titik persis di tengah kapsul oranye (350 + (260/2))
-            start_x_streak = int(480 - (total_width_streak / 2))
+            # Titik sempurna di tengah dari area kapsul oranye
+            start_x_streak = int(480 - (total_streak / 2))
 
+            # Render Ikon Api
             try:
                 res_fire = requests.get("https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f525.png", headers=headers, timeout=5)
                 if res_fire.status_code == 200:
-                    img_fire = Editor(Image.open(BytesIO(res_fire.content)).convert("RGBA").resize((icon_size, icon_size)))
-                    background.paste(img_fire, (start_x_streak, y_pos - 2))
-            except: pass
+                    img_fire = Editor(Image.open(BytesIO(res_fire.content)).convert("RGBA").resize((28, 28)))
+                    background.paste(img_fire, (start_x_streak, 164))
+            except Exception: pass
 
-            text_x_streak = int(start_x_streak + icon_size + spacing)
-            background.text((text_x_streak, y_pos), text_streak, font=font_badge, color="#FFFFFF")
+            # Render Teks Streak (Diberi align="left" secara eksplisit agar easy-pil tidak meleset)
+            text_x_streak = start_x_streak + 28 + 8
+            background.text((text_x_streak, 165), text_streak, font=font_badge, color="#FFFFFF", align="left")
 
             # 8. Badge / Pill 2: TOTAL MESSAGES (Kapsul Abu-abu)
             background.rectangle((630, 150), width=230, height=60, color="#1A1C20", radius=30)
             
             text_chat = f"{total_messages} CHATS"
-            width_text_chat = get_text_width(text_chat, font_badge.font)
-            total_width_chat = icon_size + spacing + width_text_chat
+            width_chat = get_text_width(text_chat)
+            total_chat = 28 + 8 + width_chat
             
-            # 745 adalah titik persis di tengah kapsul abu-abu (630 + (230/2))
-            start_x_chat = int(745 - (total_width_chat / 2))
+            # Titik sempurna di tengah dari area kapsul abu-abu
+            start_x_chat = int(745 - (total_chat / 2))
 
+            # Render Ikon Chat
             try:
                 res_chat = requests.get("https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4ac.png", headers=headers, timeout=5)
                 if res_chat.status_code == 200:
-                    img_chat = Editor(Image.open(BytesIO(res_chat.content)).convert("RGBA").resize((icon_size, icon_size)))
-                    background.paste(img_chat, (start_x_chat, y_pos - 2))
-            except: pass
+                    img_chat = Editor(Image.open(BytesIO(res_chat.content)).convert("RGBA").resize((28, 28)))
+                    background.paste(img_chat, (start_x_chat, 164))
+            except Exception: pass
 
-            text_x_chat = int(start_x_chat + icon_size + spacing)
-            background.text((text_x_chat, y_pos), text_chat, font=font_badge, color="#A5A7AA")
+            # Render Teks Chat
+            text_x_chat = start_x_chat + 28 + 8
+            background.text((text_x_chat, 165), text_chat, font=font_badge, color="#A5A7AA", align="left")
             
             # 9. Teks Hiasan Bawah
             background.text((350, 260), "Keep the fire burning and never break the streak!", font=Font.poppins(size=18, variant="italic"), color="#80848E")
