@@ -206,15 +206,17 @@ class StreakSystem(commands.Cog):
             # Ambil PIL ImageDraw langsung dari canvas easy-pil untuk menggambar ikon vektor
             draw = ImageDraw.Draw(background.image)
 
-            # 7. Badge / Pill 1: STREAK API (Kapsul Oranye) + ikon api gambar manual
-            background.rectangle((350, 150), width=240, height=60, color="#FF4500", radius=30)
-            draw_flame_icon(draw, x=372, y=168, size=24, color="#FFFFFF")
-            background.text((408, 165), f"{new_streak} DAYS STREAK", font=font_badge, color="#FFFFFF")
+            # 7. Badge / Pill 1: STREAK API (Kapsul Oranye)
+            # Lebar ditambah menjadi 260 agar muat untuk teks yang panjang
+            background.rectangle((350, 150), width=260, height=60, color="#FF4500", radius=30)
+            # X=480 adalah titik tengah dari kotak oranye (350 + (260/2))
+            background.text((480, 165), f"🔥 {new_streak} DAYS STREAK", font=font_badge, color="#FFFFFF", align="center")
 
-            # 8. Badge / Pill 2: TOTAL MESSAGES (Kapsul Abu-abu) + ikon chat gambar manual
-            background.rectangle((610, 150), width=230, height=60, color="#1A1C20", radius=30)
-            draw_chat_icon(draw, x=632, y=170, size=22, color="#A5A7AA")
-            background.text((668, 165), f"{total_messages} CHATS", font=font_badge, color="#A5A7AA")
+            # 8. Badge / Pill 2: TOTAL MESSAGES (Kapsul Abu-abu)
+            # Digeser sedikit ke kanan (mulai dari 630) supaya tidak menabrak kapsul oranye
+            background.rectangle((630, 150), width=230, height=60, color="#1A1C20", radius=30)
+            # X=745 adalah titik tengah dari kotak abu-abu (630 + (230/2))
+            background.text((745, 165), f"💬 {total_messages} CHATS", font=font_badge, color="#A5A7AA", align="center")
 
             # 9. Teks Hiasan Bawah
             background.text((350, 260), "Keep the fire burning and never break the streak!", font=Font.poppins(size=18, variant="italic"), color="#80848E")
