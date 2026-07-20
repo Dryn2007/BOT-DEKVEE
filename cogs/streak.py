@@ -136,6 +136,28 @@ class StreakSystem(commands.Cog):
             print("✅ Sistem Streak API siap!")
 
     # ====================================================================
+    # HELPER: Ambil ikon twemoji TANPA memblokir event loop bot
+    # ====================================================================
+    @staticmethod
+    def _fetch_icon_sync(url, headers):
+        """
+        Fungsi ini berjalan di thread terpisah (lewat run_in_executor),
+        supaya requests.get() yang blocking TIDAK membekukan seluruh bot
+        selama proses download ikon berlangsung.
+        """
+        try:
+            res = requests.get(url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                return Image.open(BytesIO(res.content)).convert("RGBA")
+        except Exception:
+            pass
+        return None
+
+    async def fetch_icon(self, url, headers):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._fetch_icon_sync, url, headers)
+
+    # ====================================================================
     # ENGINE GAMBAR EASY-PIL UNTUK PENGUMUMAN STREAK (UI PREMIUM)
     # ====================================================================
     async def kirim_kartu_pengumuman(self, ann_channel, prodi_name, new_streak, total_messages, filename):
@@ -171,34 +193,42 @@ class StreakSystem(commands.Cog):
             # RENDER IKON & TEKS TENGAH (ANTI-CRASH)
             # ==========================================
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            
-            # Fungsi pelindung ganda untuk mengukur teks (apapun versi OS server kamu, ini aman)
+
+            # --- FIX UTAMA ---
+            # Sebelumnya kode memanggil `font_badge.font.getlength(...)`.
+            # font_badge dari Font.poppins() SUDAH berupa objek PIL.ImageFont
+            # langsung, jadi `.font` di situ mengarah ke objek core FreeType
+            # internal, bukan lebar teks — hasilnya angka ngawur (ribuan px),
+            # sehingga teks dihitung berada jauh di luar kanvas dan tidak
+            # pernah kelihatan. Panggil getlength() langsung di font_badge.
             def get_text_width(text_str):
                 try:
-                    return int(font_badge.font.getlength(text_str))
+                    return int(font_badge.getlength(text_str))
                 except Exception:
                     try:
-                        return int(font_badge.font.getsize(text_str)[0])
+                        return int(font_badge.getsize(text_str)[0])
                     except Exception:
-                        return int(len(text_str) * 14) # Fallback terakhir jika semua gagal
+                        return int(len(text_str) * 14)  # Fallback terakhir jika semua gagal
 
             # 7. Badge / Pill 1: STREAK API (Kapsul Oranye)
             background.rectangle((350, 150), width=260, height=60, color="#FF4500", radius=30)
-            
+
             text_streak = f"{new_streak} DAYS STREAK"
             width_streak = get_text_width(text_streak)
-            total_streak = 28 + 8 + width_streak # 28 (lebar ikon), 8 (jarak ikon & teks)
-            
+            total_streak = 28 + 8 + width_streak  # 28 (lebar ikon), 8 (jarak ikon & teks)
+
             # Titik sempurna di tengah dari area kapsul oranye
             start_x_streak = int(480 - (total_streak / 2))
 
-            # Render Ikon Api
-            try:
-                res_fire = requests.get("https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f525.png", headers=headers, timeout=5)
-                if res_fire.status_code == 200:
-                    img_fire = Editor(Image.open(BytesIO(res_fire.content)).convert("RGBA").resize((28, 28)))
-                    background.paste(img_fire, (start_x_streak, 164))
-            except Exception: pass
+            # Render Ikon Api (non-blocking, lewat executor)
+            img_fire = await self.fetch_icon(
+                "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f525.png", headers
+            )
+            if img_fire is not None:
+                try:
+                    background.paste(Editor(img_fire.resize((28, 28))), (start_x_streak, 164))
+                except Exception:
+                    pass
 
             # Render Teks Streak (Diberi align="left" secara eksplisit agar easy-pil tidak meleset)
             text_x_streak = start_x_streak + 28 + 8
@@ -206,26 +236,28 @@ class StreakSystem(commands.Cog):
 
             # 8. Badge / Pill 2: TOTAL MESSAGES (Kapsul Abu-abu)
             background.rectangle((630, 150), width=230, height=60, color="#1A1C20", radius=30)
-            
+
             text_chat = f"{total_messages} CHATS"
             width_chat = get_text_width(text_chat)
             total_chat = 28 + 8 + width_chat
-            
+
             # Titik sempurna di tengah dari area kapsul abu-abu
             start_x_chat = int(745 - (total_chat / 2))
 
-            # Render Ikon Chat
-            try:
-                res_chat = requests.get("https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4ac.png", headers=headers, timeout=5)
-                if res_chat.status_code == 200:
-                    img_chat = Editor(Image.open(BytesIO(res_chat.content)).convert("RGBA").resize((28, 28)))
-                    background.paste(img_chat, (start_x_chat, 164))
-            except Exception: pass
+            # Render Ikon Chat (non-blocking, lewat executor)
+            img_chat = await self.fetch_icon(
+                "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4ac.png", headers
+            )
+            if img_chat is not None:
+                try:
+                    background.paste(Editor(img_chat.resize((28, 28))), (start_x_chat, 164))
+                except Exception:
+                    pass
 
             # Render Teks Chat
             text_x_chat = start_x_chat + 28 + 8
             background.text((text_x_chat, 165), text_chat, font=font_badge, color="#A5A7AA", align="left")
-            
+
             # 9. Teks Hiasan Bawah
             background.text((350, 260), "Keep the fire burning and never break the streak!", font=Font.poppins(size=18, variant="italic"), color="#80848E")
 
