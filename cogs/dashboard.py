@@ -111,10 +111,10 @@ class Dashboard(commands.Cog):
             try:
                 await self.dashboard_message.edit(embed=embed)
             except discord.NotFound:
-                self.dashboard_message = await channel.send(embed=embed)
+                self.dashboard_message = await channel.send(embed=embed, silent=True)
         else:
             await channel.purge(limit=10)
-            self.dashboard_message = await channel.send(embed=embed)
+            self.dashboard_message = await channel.send(embed=embed, silent=True)
 
     @commands.command()
     @commands.has_permissions(administrator=True)
