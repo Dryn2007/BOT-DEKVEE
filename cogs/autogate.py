@@ -78,6 +78,36 @@ class AutoGate(commands.Cog):
             self.is_ready = True
             print("✅ Tabel Keamanan SKL (skl_registry) siap!")
 
+            # Catch-up: kalau bot sempat down/restart pas ada user join,
+            # on_member_join event mereka "hilang" (Discord tidak replay event
+            # yang lewat). Di sini kita cari member yang belum punya role
+            # MEMBER dan kirim ulang halt message-nya biar nggak ada yang
+            # kelewat cuma gara-gara bot lagi mati pas mereka join.
+            await self.catch_up_missed_joins()
+
+    async def catch_up_missed_joins(self):
+        pos_satpam = self.bot.get_channel(self.pos_satpam_id)
+        if pos_satpam is None:
+            try:
+                pos_satpam = await self.bot.fetch_channel(self.pos_satpam_id)
+            except Exception as e:
+                print(f"❌ Catch-up gagal, tidak bisa fetch pos_satpam: {e}")
+                return
+
+        guild = pos_satpam.guild
+        role_member = discord.utils.get(guild.roles, name="MEMBER")
+
+        for member in guild.members:
+            if member.bot:
+                continue
+            if role_member and role_member in member.roles:
+                continue  # sudah lolos verifikasi, skip
+            try:
+                await self.send_halt_message(pos_satpam, member, is_retry=False)
+                await asyncio.sleep(1)  # jaga-jaga kalau banyak member sekaligus
+            except Exception as e:
+                print(f"❌ Gagal catch-up halt message ke {member}: {e}")
+
     async def panggil_gemini_api(self, prompt, image_data, mime_type):
         if not gemini_key:
             raise Exception("API Key Gemini belum terbaca!")
@@ -146,7 +176,26 @@ class AutoGate(commands.Cog):
         )
         embed.set_image(url="attachment://tutorial_upload.png")
 
-        file = discord.File("assets/tutorial_upload.png", filename="tutorial_upload.png")
+        # Pastikan path gambar valid sebelum bikin discord.File, biar kalau
+        # gagal errornya jelas ("gambar tutorial tidak ketemu") bukan cuma
+        # FileNotFoundError generik yang bikin seluruh fungsi ini gagal diam-diam.
+        asset_path = "assets/tutorial_upload.png"
+        if not os.path.isfile(asset_path):
+            print(f"❌ Asset '{asset_path}' tidak ditemukan (cwd: {os.getcwd()}). "
+                  f"Halt message dikirim tanpa gambar tutorial.")
+            await channel.send(
+                content=(
+                    f"🚨 **HALT!** {sapaan}, {member.mention}!\n\n"
+                    f"Untuk masuk, **upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
+                    f"⚠️ **PENTING:** Pastikan **Nama Lengkap, Nomor Registrasi (11 Angka), Prodi, Kampus Jakarta**, dan tahun **2026/2027** terlihat dengan jelas ya!\n\n"
+                    f"📄 **Link Drive di bawah ini CUMA buat LIHAT CONTOH format SKL yang valid, BUKAN tempat upload ya:**\n"
+                    f"https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing\n\n"
+                    f"Ssst... ruangan ini cuma buat upload gambar, jadi dilarang chat. Langsung drop fotonya aja!"
+                )
+            )
+            return
+
+        file = discord.File(asset_path, filename="tutorial_upload.png")
 
         await channel.send(
             content=(
@@ -163,10 +212,23 @@ class AutoGate(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
-        if member.bot: return
+        if member.bot:
+            return
+
         pos_satpam = self.bot.get_channel(self.pos_satpam_id)
-        if pos_satpam:
+        if pos_satpam is None:
+            # Cache belum ke-load (misal bot baru banget nyala), coba fetch
+            # langsung ke API biar nggak silently skip.
+            try:
+                pos_satpam = await self.bot.fetch_channel(self.pos_satpam_id)
+            except Exception as e:
+                print(f"❌ Gagal fetch channel pos_satpam untuk {member}: {e}")
+                return
+
+        try:
             await self.send_halt_message(pos_satpam, member, is_retry=False)
+        except Exception as e:
+            print(f"❌ Gagal kirim halt message ke {member} saat join: {e}")
 
     @commands.Cog.listener()
     async def on_message(self, message):

@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from datetime import datetime, timedelta, timezone
 import os
 import asyncio
@@ -25,6 +25,11 @@ PRODI_ROOMS = {
 
 MILESTONES = [3, 10, 30, 100, 200, 300, 400]
 WIB = timezone(timedelta(hours=7))
+
+# Interval pengingat streak (dalam jam)
+REMINDER_INTERVAL_HOURS = 1
+# Jumlah minimal orang berbeda yang harus chat per hari agar streak aman
+MIN_CHATTERS_PER_DAY = 5
 
 # ====================================================================
 # UI KONFIRMASI PEMULIHAN STREAK (TUMBAL XP)
@@ -83,6 +88,9 @@ class RestoreConfirmView(discord.ui.View):
         except:
             pass
 
+        # Streak sudah dipulihkan -> bersihkan reminder pin yang mungkin masih nempel
+        await self.cog.clear_reminder_pin(self.prodi_name)
+
         embed = discord.Embed(
             title="🔥 STREAK BERHASIL DIPULIHKAN! 🔥",
             description=f"Ritual berhasil, {interaction.user.mention}! Streak **{self.prodi_name}** kembali ke **{self.lost_streak} Hari**.\n\n"
@@ -107,6 +115,14 @@ class StreakSystem(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.is_db_ready = False
+        # Menyimpan message_id pengingat yang sedang di-pin per prodi,
+        # supaya bisa di-unpin/dihapus saat streak akhirnya menyala
+        # atau saat pengingat baru dikirim.
+        self.reminder_messages = {}
+
+    def cog_unload(self):
+        if self.reminder_loop.is_running():
+            self.reminder_loop.cancel()
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -135,6 +151,10 @@ class StreakSystem(commands.Cog):
             self.is_db_ready = True
             print("✅ Sistem Streak API siap!")
 
+        # Mulai loop pengingat streak (hanya sekali, walaupun on_ready bisa terpanggil berkali-kali)
+        if not self.reminder_loop.is_running():
+            self.reminder_loop.start()
+
     # ====================================================================
     # HELPER: Ambil ikon twemoji TANPA memblokir event loop bot
     # ====================================================================
@@ -156,6 +176,33 @@ class StreakSystem(commands.Cog):
     async def fetch_icon(self, url, headers):
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._fetch_icon_sync, url, headers)
+
+    # ====================================================================
+    # HELPER: Bersihkan pin pengingat streak (dipanggil saat streak menyala lagi)
+    # ====================================================================
+    async def clear_reminder_pin(self, prodi_name):
+        old_msg_id = self.reminder_messages.pop(prodi_name, None)
+        if not old_msg_id:
+            return
+
+        channel_id = None
+        for cid, pname in PRODI_ROOMS.items():
+            if pname == prodi_name:
+                channel_id = cid
+                break
+        if not channel_id:
+            return
+
+        channel = self.bot.get_channel(channel_id)
+        if not channel:
+            return
+
+        try:
+            old_msg = await channel.fetch_message(old_msg_id)
+            await old_msg.unpin(reason="Streak sudah menyala, pengingat tidak diperlukan lagi")
+            await old_msg.delete()
+        except Exception:
+            pass
 
     # ====================================================================
     # ENGINE GAMBAR EASY-PIL UNTUK PENGUMUMAN STREAK (UI PREMIUM)
@@ -301,8 +348,8 @@ class StreakSystem(commands.Cog):
             WHERE prodi_name = $1 AND chat_date = $2
         ''', prodi_name, today)
 
-        # TRIGGER STREAK (SET 5)
-        if count >= 5:
+        # TRIGGER STREAK (SET MIN_CHATTERS_PER_DAY)
+        if count >= MIN_CHATTERS_PER_DAY:
             record = await self.bot.pool.fetchrow(
                 'SELECT current_streak, last_active_date, total_messages, lost_streak FROM prodi_streaks WHERE prodi_name = $1',
                 prodi_name
@@ -332,6 +379,9 @@ class StreakSystem(commands.Cog):
                 SET current_streak = $1, last_active_date = $2, lost_streak = $3 
                 WHERE prodi_name = $4
             ''', new_streak, today, lost_streak_value, prodi_name)
+
+            # Streak sudah menyala hari ini -> hapus pengingat yang mungkin masih ke-pin
+            await self.clear_reminder_pin(prodi_name)
 
             if streak_mati:
                 # Reset total chat kembali ke 0 karena streaknya mati
@@ -366,6 +416,85 @@ class StreakSystem(commands.Cog):
                         await self.kirim_kartu_pengumuman(ann_channel, prodi_name, new_streak, total_messages_saat_ini, filename)
 
     # ====================================================================
+    # LOOP: PENGINGAT STREAK OTOMATIS SETIAP 1 JAM
+    # ====================================================================
+    @tasks.loop(hours=REMINDER_INTERVAL_HOURS)
+    async def reminder_loop(self):
+        if not self.is_db_ready:
+            return
+
+        today = datetime.now(WIB).date()
+
+        for channel_id, prodi_name in PRODI_ROOMS.items():
+            try:
+                channel = self.bot.get_channel(channel_id)
+                if not channel:
+                    continue
+
+                record = await self.bot.pool.fetchrow(
+                    'SELECT last_active_date FROM prodi_streaks WHERE prodi_name = $1', prodi_name
+                )
+                sudah_menyala_hari_ini = bool(record and record['last_active_date'] == today)
+
+                # Kalau streak hari ini sudah aman, tidak perlu diingatkan.
+                if sudah_menyala_hari_ini:
+                    continue
+
+                count = await self.bot.pool.fetchval('''
+                    SELECT COUNT(*) FROM daily_chatters
+                    WHERE prodi_name = $1 AND chat_date = $2
+                ''', prodi_name, today) or 0
+
+                sisa = max(0, MIN_CHATTERS_PER_DAY - count)
+
+                # Hapus pengingat lama (kalau ada) sebelum kirim & pin yang baru,
+                # supaya tidak numpuk banyak pesan ter-pin.
+                old_msg_id = self.reminder_messages.get(prodi_name)
+                if old_msg_id:
+                    try:
+                        old_msg = await channel.fetch_message(old_msg_id)
+                        await old_msg.unpin(reason="Pengingat streak diperbarui")
+                        await old_msg.delete()
+                    except Exception:
+                        pass
+
+                embed = discord.Embed(
+                    title="⏰ PENGINGAT STREAK API!",
+                    description=(
+                        f"Woy **{prodi_name}**, api streak kalian belum menyala hari ini! 🔥\n\n"
+                        f"Butuh minimal **{MIN_CHATTERS_PER_DAY} orang berbeda** yang chat di room ini hari ini.\n"
+                        f"Sejauh ini baru **{count} orang** yang chat.\n"
+                        f"Kurang **{sisa} orang lagi** biar streak tetap aman!\n\n"
+                        f"⏳ Jangan sampai streak putus, ayo rame-rame chat sekarang!"
+                    ),
+                    color=discord.Color.gold()
+                )
+                embed.set_footer(text=f"Pengingat otomatis setiap {REMINDER_INTERVAL_HOURS} jam sampai streak menyala")
+
+                # Tag role prodi (kalau rolenya ada) biar member ke-notif
+                role = discord.utils.get(channel.guild.roles, name=prodi_name)
+                content = role.mention if role else None
+
+                msg = await channel.send(
+                    content=content,
+                    embed=embed,
+                    allowed_mentions=discord.AllowedMentions(roles=True)
+                )
+                try:
+                    await msg.pin(reason="Pengingat Streak Otomatis")
+                except Exception:
+                    pass
+
+                self.reminder_messages[prodi_name] = msg.id
+
+            except Exception as e:
+                print(f"[Error Reminder] Gagal kirim reminder untuk {prodi_name}: {e}")
+
+    @reminder_loop.before_loop
+    async def before_reminder_loop(self):
+        await self.bot.wait_until_ready()
+
+    # ====================================================================
     # COMMAND: SET STREAK (UNTUK TESTING MILESTONE INSTAN)
     # ====================================================================
     @commands.command()
@@ -394,6 +523,9 @@ class StreakSystem(commands.Cog):
             SET current_streak = EXCLUDED.current_streak,
                 last_active_date = EXCLUDED.last_active_date
         ''', prodi, jumlah, today, real_total_messages)
+
+        # Streak disuntik menyala hari ini -> bersihkan pengingat yang mungkin masih ke-pin
+        await self.clear_reminder_pin(prodi)
 
         await ctx.send(f"✅ Streak **{prodi}** berhasil disuntik menjadi **{jumlah} Hari** (Total chat asli tercatat: {real_total_messages}).")
 
