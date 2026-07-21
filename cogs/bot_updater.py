@@ -6,8 +6,8 @@ from datetime import datetime
 # ==========================================
 # CONFIGURATION
 # ==========================================
-ANNOUNCEMENT_CHANNEL_ID = 123456789012345678  # Ganti dengan ID Channel Pengumuman Publik
-ADMIN_DASHBOARD_CHANNEL_ID = 987654321098765432  # Ganti dengan ID Room Khusus Admin (Dashboard)
+ANNOUNCEMENT_CHANNEL_ID = 1526150901126139984  # Ganti dengan ID Channel Pengumuman Publik
+ADMIN_DASHBOARD_CHANNEL_ID = 1529106931577520189  # Ganti dengan ID Room Khusus Admin (Dashboard)
 
 # ==========================================
 # UI MODALS (Form Isian)
