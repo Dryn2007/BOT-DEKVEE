@@ -148,7 +148,7 @@ class SupportSystem(commands.Cog):
                 color=discord.Color.blurple()
             )
             view_tiket = CreateTicketView(self)
-            await channel_tiket.send(embed=embed_tiket, view=view_tiket)
+            await channel_tiket.send(embed=embed_tiket, view=view_tiket, silent=True)
 
         # --- 2. SETUP ROOM DONASI (DENGAN GAMBAR QRIS) ---
         if channel_donasi:
@@ -174,11 +174,11 @@ class SupportSystem(commands.Cog):
             if os.path.exists(nama_file_qris):
                 file = discord.File(nama_file_qris, filename="qris_donasi.jpg")
                 embed_donasi.set_image(url="attachment://qris_donasi.jpg")
-                await channel_donasi.send(file=file, embed=embed_donasi)
+                await channel_donasi.send(file=file, embed=embed_donasi, silent=True)
             else:
                 # Jika lupa taruh gambar, bot tetap kirim teks tanpa gambar agar tidak error
                 print(f"[WARNING] File {nama_file_qris} tidak ditemukan! Pastikan sudah ditaruh di folder bot.")
-                await channel_donasi.send(embed=embed_donasi)
+                await channel_donasi.send(embed=embed_donasi, silent=True)
 
     @commands.command()
     @commands.has_permissions(administrator=True)

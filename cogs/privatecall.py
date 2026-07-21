@@ -267,7 +267,7 @@ class PrivateCallCog(commands.Cog):
         )
 
         view = MainPrivateCallDashboard(self)
-        self.dashboard_message = await channel.send(embed=embed, view=view)
+        self.dashboard_message = await channel.send(embed=embed, view=view, silent=True)
 
     @commands.command()
     @commands.has_permissions(administrator=True)
