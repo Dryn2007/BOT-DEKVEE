@@ -1,0 +1,6 @@
+[DEFAULT]
+user=ocid1.user.oc1..aaaaaaaaqdftbtgioxqjqceovld3kz6tpihcvvince6eqzzalu7ysjmh77ba
+fingerprint=15:a1:c4:d5:4c:aa:5b:78:02:33:54:16:18:b1:86:a8
+tenancy=ocid1.tenancy.oc1..aaaaaaaavotqdahvfb5b2epny5764gvur36v47vvhibzjw2glvghkjwptycq
+region=ap-batam-1
+key_file=oracle_api_key.pem
