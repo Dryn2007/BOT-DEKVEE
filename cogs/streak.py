@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands, tasks
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time
 import os
 import asyncio
 import requests
@@ -26,8 +26,6 @@ PRODI_ROOMS = {
 MILESTONES = [3, 10, 30, 100, 200, 300, 400]
 WIB = timezone(timedelta(hours=7))
 
-# Interval pengingat streak (dalam jam)
-REMINDER_INTERVAL_HOURS = 1
 # Jumlah minimal orang berbeda yang harus chat per hari agar streak aman
 MIN_CHATTERS_PER_DAY = 5
 
@@ -416,9 +414,9 @@ class StreakSystem(commands.Cog):
                         await self.kirim_kartu_pengumuman(ann_channel, prodi_name, new_streak, total_messages_saat_ini, filename)
 
     # ====================================================================
-    # LOOP: PENGINGAT STREAK OTOMATIS SETIAP 1 JAM
+    # LOOP: PENGINGAT STREAK HARIAN JAM 19:00 WIB
     # ====================================================================
-    @tasks.loop(hours=REMINDER_INTERVAL_HOURS)
+    @tasks.loop(time=time(hour=19, minute=0, tzinfo=WIB))
     async def reminder_loop(self):
         if not self.is_db_ready:
             return
@@ -469,7 +467,7 @@ class StreakSystem(commands.Cog):
                     ),
                     color=discord.Color.gold()
                 )
-                embed.set_footer(text=f"Pengingat otomatis setiap {REMINDER_INTERVAL_HOURS} jam sampai streak menyala")
+                embed.set_footer(text="Pengingat harian pukul 19:00 WIB sampai streak menyala")
 
                 # Tag role prodi (kalau rolenya ada) biar member ke-notif
                 role = discord.utils.get(channel.guild.roles, name=prodi_name)
@@ -481,7 +479,7 @@ class StreakSystem(commands.Cog):
                     allowed_mentions=discord.AllowedMentions(roles=True)
                 )
                 try:
-                    await msg.pin(reason="Pengingat Streak Otomatis")
+                    await msg.pin(reason="Pengingat Streak Harian")
                 except Exception:
                     pass
 
