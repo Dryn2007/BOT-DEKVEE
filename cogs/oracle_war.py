@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 import oci
 import time
 import asyncio
+from datetime import datetime, timedelta
 
 # ==========================================
 # 1. KONFIGURASI ORACLE CLOUD
@@ -75,7 +76,7 @@ class OracleWar(commands.Cog):
             print("❌ Channel tujuan tidak ditemukan. Pastikan TARGET_CHANNEL_ID benar.")
             return
 
-        waktu_mulai = time.strftime("%H:%M:%S")
+        waktu_mulai = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S")
         pesan_awal = f"⏳ `[{waktu_mulai}]` Memulai percobaan membuat server ke sistem Oracle..."
         
         # Jika belum ada pesan yang dikirim, kirim pesan baru. Jika sudah ada, edit pesan lamanya.
@@ -92,7 +93,7 @@ class OracleWar(commands.Cog):
         status = await asyncio.to_thread(try_create_instance)
         
         # Waktu selesai percobaan
-        waktu_selesai = time.strftime("%H:%M:%S")
+        waktu_selesai = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S")
         
         if status == "SUCCESS":
             pesan_sukses = f"🎉 `[{waktu_selesai}]` **BERHASIL!!!** Server Oracle sudah dibuat! Segera cek dasbor, misi selesai!"
