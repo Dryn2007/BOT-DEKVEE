@@ -69,7 +69,7 @@ class OracleWar(commands.Cog):
             self.war_task.start()
             print("🚀 Proses war langsung berjalan otomatis!")
 
-    @tasks.loop(seconds=30)
+    @tasks.loop(minutes=1)
     async def war_task(self):
         channel = self.bot.get_channel(TARGET_CHANNEL_ID)
         if not channel:
