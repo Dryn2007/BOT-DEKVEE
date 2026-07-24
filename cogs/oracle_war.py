@@ -102,12 +102,12 @@ class OracleWar(commands.Cog):
             self.war_task.stop()
             
         elif status == "CAPACITY":
-            pesan_gagal = f"❌ `[{waktu_selesai}]` Out of capacity. Mencoba lagi dalam 5 menit."
+            pesan_gagal = f"❌ `[{waktu_selesai}]` Out of capacity. Mencoba lagi dalam 2 menit."
             await self.status_message.edit(content=pesan_gagal)
-            print("❌ Masih penuh (Out of capacity). Menunggu 5 menit...")
+            print("❌ Masih penuh (Out of capacity). Menunggu 2 menit...")
             
         else:
-            pesan_error = f"⚠️ `[{waktu_selesai}]` {status}. Mencoba lagi dalam 5 menit."
+            pesan_error = f"⚠️ `[{waktu_selesai}]` {status}. Mencoba lagi dalam 2 menit."
             await self.status_message.edit(content=pesan_error)
             print(f"⚠️ {status}")
 
