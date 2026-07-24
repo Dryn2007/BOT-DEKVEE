@@ -7,7 +7,6 @@ import asyncio
 # ==========================================
 # 1. KONFIGURASI ORACLE CLOUD
 # ==========================================
-# File config akan dibaca dari folder utama tempat main.py berada
 config = oci.config.from_file(file_location="config")
 compute_client = oci.core.ComputeClient(config)
 
@@ -18,7 +17,6 @@ shape = "VM.Standard.A1.Flex"
 # ==========================================
 # 2. PENGATURAN ROOM KHUSUS DISCORD
 # ==========================================
-# Ganti angka di bawah dengan ID Channel/Room khusus war di servermu
 TARGET_CHANNEL_ID = 1530011990150349031 
 
 def try_create_instance():
@@ -45,11 +43,13 @@ def try_create_instance():
                 metadata={"ssh_authorized_keys": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCxFdVgfWtP3+8Lv/XVH4g2bZh0mi4nGQaGbrUou8CLv7uW4OuSWnPczrueTcODxRuhmhE3F42VZJrsQFhvTaBU7n4pVPWPoaZ3V2gekaed2rztJsfw4jwBvBcAvBi0XXNQSBa8OyzRa2F3T2/2lgpP1mBlOCDKBgaAI0yuaQhYcpfHkefz5UePq5JSmGdFNgXu5C8KThQzV4iSQPBIQc5z6dKrAEa593L60mfgBOE1eL6Fadh3HvcqFB96wj1qLhpHBkZnF9tIgk8xgmChKyELJHxg4DpDU3K6zehqede4lipVgLAF/v/2H+HUhvZKU/UzOgse8m5viQQVrFxfqItV ssh-key-2026-07-23"}
             )
         )
-        return True
+        return "SUCCESS"
     except oci.exceptions.ServiceError as e:
-        if "Out of capacity" not in str(e) and "Out of host capacity" not in str(e):
-            print(f" ⚠️ Error lain terjadi: {e}")
-        return False
+        # Menangkap error kapasitas dengan aman
+        if "Out of capacity" in str(e) or "Out of host capacity" in str(e):
+            return "CAPACITY"
+        else:
+            return f"ERROR: {e}"
 
 # ==========================================
 # 3. CLASS COG ORACLE WAR
@@ -57,50 +57,78 @@ def try_create_instance():
 class OracleWar(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # Variabel untuk menyimpan pesan yang akan terus diedit
+        self.status_message = None
 
     @commands.Cog.listener()
     async def on_ready(self):
         print("✅ Modul War Oracle berhasil dimuat!")
+        # Menyalakan war secara otomatis saat bot online
+        if not self.war_task.is_running():
+            self.war_task.start()
+            print("🚀 Proses war langsung berjalan otomatis!")
 
     @tasks.loop(minutes=5)
     async def war_task(self):
-        waktu_sekarang = time.strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{waktu_sekarang}] Bot mencoba membuat server Oracle...")
-        
-        sukses = await asyncio.to_thread(try_create_instance)
-        
-        if sukses:
-            print("🎉 BERHASIL! Server sudah dibuat!")
-            channel = self.bot.get_channel(TARGET_CHANNEL_ID)
-            if channel:
-                # Bot nge-tag kamu saat sukses
-                await channel.send("🎉 **BERHASIL!!!** Server Oracle sudah dibuat! Segera cek dasbor, misi selesai!")
-            
-            self.war_task.stop()
-        else:
-            print("❌ Masih penuh (Out of capacity). Menunggu 5 menit...")
+        channel = self.bot.get_channel(TARGET_CHANNEL_ID)
+        if not channel:
+            print("❌ Channel tujuan tidak ditemukan. Pastikan TARGET_CHANNEL_ID benar.")
+            return
 
+        waktu_mulai = time.strftime("%H:%M:%S")
+        pesan_awal = f"⏳ `[{waktu_mulai}]` Memulai percobaan membuat server ke sistem Oracle..."
+        
+        # Jika belum ada pesan yang dikirim, kirim pesan baru. Jika sudah ada, edit pesan lamanya.
+        if self.status_message is None:
+            self.status_message = await channel.send(pesan_awal)
+        else:
+            try:
+                await self.status_message.edit(content=pesan_awal)
+            except discord.NotFound:
+                # Berjaga-jaga jika pesan terhapus manual oleh seseorang di Discord
+                self.status_message = await channel.send(pesan_awal)
+        
+        # Eksekusi fungsi pembuatan server
+        status = await asyncio.to_thread(try_create_instance)
+        
+        # Waktu selesai percobaan
+        waktu_selesai = time.strftime("%H:%M:%S")
+        
+        if status == "SUCCESS":
+            pesan_sukses = f"🎉 `[{waktu_selesai}]` **BERHASIL!!!** Server Oracle sudah dibuat! Segera cek dasbor, misi selesai!"
+            await self.status_message.edit(content=pesan_sukses)
+            print("🎉 BERHASIL! Server sudah dibuat!")
+            self.war_task.stop()
+            
+        elif status == "CAPACITY":
+            pesan_gagal = f"❌ `[{waktu_selesai}]` Out of capacity. Mencoba lagi dalam 5 menit."
+            await self.status_message.edit(content=pesan_gagal)
+            print("❌ Masih penuh (Out of capacity). Menunggu 5 menit...")
+            
+        else:
+            pesan_error = f"⚠️ `[{waktu_selesai}]` {status}. Mencoba lagi dalam 5 menit."
+            await self.status_message.edit(content=pesan_error)
+            print(f"⚠️ {status}")
+
+    # Mengubah command manual menjadi fitur darurat (opsional)
     @commands.command()
     async def startwar(self, ctx):
-        if ctx.channel.id != TARGET_CHANNEL_ID:
-            return
-            
+        if ctx.channel.id != TARGET_CHANNEL_ID: return
         if self.war_task.is_running():
-            await ctx.send("⏳ War Oracle sudah berjalan di latar belakang! Sabar ya.")
+            await ctx.send("⏳ Bot sudah otomatis berjalan di latar belakang!")
         else:
+            self.status_message = None # Reset pesan agar membuat baru
             self.war_task.start()
-            await ctx.send("🚀 **Proses War Oracle Dimulai!** Aku akan mengetuk server Oracle setiap 5 menit.")
+            await ctx.send("🚀 Memulai ulang loop war!")
 
     @commands.command()
     async def stopwar(self, ctx):
-        if ctx.channel.id != TARGET_CHANNEL_ID:
-            return
-            
+        if ctx.channel.id != TARGET_CHANNEL_ID: return
         if self.war_task.is_running():
             self.war_task.stop()
-            await ctx.send("🛑 **War Oracle dihentikan.**")
+            await ctx.send("🛑 **War Oracle dihentikan sementara.**")
         else:
-            await ctx.send("War Oracle memang sedang tidak berjalan.")
+            await ctx.send("War memang sedang tidak berjalan.")
 
 # ==========================================
 # 4. FUNGSI SETUP COG
