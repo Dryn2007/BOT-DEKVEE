@@ -34,6 +34,7 @@ class VoiceLog(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         if not self.is_ready:
+            # 1. Tabel History Panggilan
             await self.pool.execute('''
                 CREATE TABLE IF NOT EXISTS history (
                     tanggal TEXT,
@@ -43,21 +44,65 @@ class VoiceLog(commands.Cog):
                 )
             ''')
             
+            # 2. TABEL BARU: Menyimpan sesi aktif agar aman dari Restart
+            await self.pool.execute('''
+                CREATE TABLE IF NOT EXISTS active_sessions (
+                    user_id BIGINT PRIMARY KEY,
+                    channel_id BIGINT,
+                    start_time TIMESTAMP
+                )
+            ''')
+            
             asyncio.create_task(self.sync_active_sessions())
             self.is_ready = True
 
     async def sync_active_sessions(self):
+        # 1. Ambil data sesi yang menggantung di database (sebelum bot mati)
+        records = await self.pool.fetch("SELECT * FROM active_sessions")
+        saved_sessions = {record['user_id']: record for record in records}
+
+        current_active_users = set()
+
         for guild in self.bot.guilds:
             for vc in guild.voice_channels:
                 if self._is_private_call(vc):
                     continue  # jangan sinkronkan room privat
+                    
                 for member in vc.members:
-                    if not member.bot and member.id not in self.voice_sessions:
+                    if member.bot: continue
+                    current_active_users.add(member.id)
+                    
+                    if member.id in saved_sessions:
+                        # User sudah ada di VC dari sebelum bot mati -> Lanjutkan waktu aslinya
                         self.voice_sessions[member.id] = {
-                            "start_time": datetime.now(),
+                            "start_time": saved_sessions[member.id]['start_time'],
                             "channel_id": vc.id
                         }
-        print("✅ Sinkronisasi Voice Channel selesai! User aktif berhasil dilacak ulang.")
+                    else:
+                        # User join tepat saat bot mati -> Mulai hitung baru dari sekarang
+                        waktu_sekarang = datetime.now()
+                        self.voice_sessions[member.id] = {
+                            "start_time": waktu_sekarang,
+                            "channel_id": vc.id
+                        }
+                        await self.pool.execute(
+                            "INSERT INTO active_sessions (user_id, channel_id, start_time) VALUES ($1, $2, $3)",
+                            member.id, vc.id, waktu_sekarang
+                        )
+
+        # 2. Bersihkan Ghost Data (Member yang KELUAR saat bot sedang offline)
+        for uid, session in saved_sessions.items():
+            if uid not in current_active_users:
+                durasi = (datetime.now() - session['start_time']).total_seconds()
+                tanggal_masuk = session['start_time'].strftime('%Y-%m-%d')
+                
+                await self.pool.execute(
+                    "INSERT INTO history (tanggal, channel_id, user_id, durasi) VALUES ($1, $2, $3, $4)",
+                    tanggal_masuk, session['channel_id'], uid, durasi
+                )
+                await self.pool.execute("DELETE FROM active_sessions WHERE user_id = $1", uid)
+
+        print("✅ Sinkronisasi Voice Channel selesai! Sesi aktif sebelum restart berhasil dilanjutkan.")
 
     def get_today_date(self):
         return datetime.now().strftime('%Y-%m-%d')
@@ -95,24 +140,35 @@ class VoiceLog(commands.Cog):
                         "INSERT INTO history (tanggal, channel_id, user_id, durasi) VALUES ($1, $2, $3, $4)", 
                         tanggal_hari_ini, session["channel_id"], member.id, durasi_sesi
                     )
+                    
+                    # >>> HAPUS DARI DATABASE SESI AKTIF <<<
+                    await self.pool.execute("DELETE FROM active_sessions WHERE user_id = $1", member.id)
             else:
                 # Kalau memang ada sesi nyasar tercatat utk room privat, buang saja tanpa disimpan
                 self.voice_sessions.pop(member.id, None)
+                await self.pool.execute("DELETE FROM active_sessions WHERE user_id = $1", member.id)
 
         # JIKA USER MASUK VC ATAU PINDAH VC
         if after.channel is not None and before.channel != after.channel:
             # Jangan mulai sesi tracking kalau tujuan adalah room privat
             if not self._is_private_call(after.channel):
+                waktu_mulai = datetime.now()
                 self.voice_sessions[member.id] = {
-                    "start_time": datetime.now(),
+                    "start_time": waktu_mulai,
                     "channel_id": after.channel.id
                 }
+                
+                # >>> SIMPAN KE DATABASE AGAR AMAN SAAT RESTART <<<
+                await self.pool.execute(
+                    "INSERT INTO active_sessions (user_id, channel_id, start_time) VALUES ($1, $2, $3) "
+                    "ON CONFLICT (user_id) DO UPDATE SET start_time = EXCLUDED.start_time, channel_id = EXCLUDED.channel_id",
+                    member.id, after.channel.id, waktu_mulai
+                )
 
     # >>> SISTEM FILTERING & PENGECEKAN ROLE AMAN <<<
     def build_embed(self, guild, requester, judul, data_durasi, real_time_sessions=None):
         embed = discord.Embed(title=judul, color=discord.Color.blue())
         
-        # Pengecekan Aman: Karena jika dipanggil dari DM, tipe requester adalah discord.User
         is_admin = False
         requester_prodi_roles = set()
         
@@ -120,7 +176,6 @@ class VoiceLog(commands.Cog):
             is_admin = requester.guild_permissions.administrator
             requester_prodi_roles = set([r.id for r in requester.roles if r.id in PRODI_ROLE_IDS])
         else:
-            # Jika dari DM, fetch objek Member asli dari server
             member_obj = guild.get_member(requester.id)
             if member_obj:
                 is_admin = member_obj.guild_permissions.administrator
@@ -142,13 +197,9 @@ class VoiceLog(commands.Cog):
         for chan_id, users in data_durasi.items():
             channel = guild.get_channel(chan_id)
 
-            # FILTER 0: Lewati kalau channel sudah tidak ada (kemungkinan besar
-            # room privat yang sudah dihapus otomatis) ATAU channel tersebut
-            # ada di kategori room privat.
             if channel is None or self._is_private_call(channel):
                 continue
 
-            # FILTER 1: Lewati channel yang tidak bisa dilihat oleh requester (Kecuali Admin)
             if not is_admin and not channel.permissions_for(requester).view_channel:
                 continue
                 
@@ -162,7 +213,6 @@ class VoiceLog(commands.Cog):
                 
                 member = guild.get_member(uid)
                 
-                # FILTER 2: Filter berdasarkan Role Prodi
                 if not is_admin:
                     if requester_prodi_roles:
                         if member:
@@ -212,23 +262,18 @@ class VoiceLog(commands.Cog):
             
             view = HistoryView(self, tanggal_tersedia, ctx.guild)
             
-            # >>> LOGIKA KHUSUS JIKA YANG KETIK ADALAH ADMIN <<<
             if is_admin:
-                # 1. Kirim pesan palsu ke grup
                 public_msg = await ctx.send("🔒 **Admin Sedang Cek Log Panggilan...**")
                 try:
-                    # 2. Kirim Dropdown History lewat DM
                     msg = await ctx.author.send("Pilih tanggal history yang ingin kamu lihat:", view=view)
                     view.message = msg 
                 except discord.Forbidden:
                     await ctx.send(f"⚠️ {ctx.author.mention}, DM kamu tertutup! Gagal mengirim log rahasia.", delete_after=10)
                 
-                # 3. Hapus pesan palsu dari grup setelah 30 detik
                 await asyncio.sleep(30)
                 try: await public_msg.delete()
                 except: pass
                 
-            # >>> LOGIKA JIKA MEMBER BIASA <<<
             else:
                 msg = await ctx.send("Pilih tanggal history yang ingin kamu lihat:", view=view)
                 view.message = msg 
@@ -244,7 +289,6 @@ class VoiceLog(commands.Cog):
             
             embed = self.build_embed(ctx.guild, ctx.author, f"📊 Statistik VC: Hari Ini ({tanggal_hari_ini})", data_hari_ini, self.voice_sessions)
             
-            # >>> LOGIKA KHUSUS JIKA YANG KETIK ADALAH ADMIN <<<
             if is_admin:
                 public_msg = await ctx.send("🔒 **Admin Sedang Cek Log Panggilan...**")
                 try:
@@ -256,7 +300,6 @@ class VoiceLog(commands.Cog):
                 try: await public_msg.delete()
                 except: pass
                 
-            # >>> LOGIKA JIKA MEMBER BIASA <<<
             else:
                 msg = await ctx.send(embed=embed)
                 await asyncio.sleep(30)
@@ -265,7 +308,6 @@ class VoiceLog(commands.Cog):
 
 
 class HistoryDropdown(discord.ui.Select):
-    # MENERIMA PARAMETER 'guild' AGAR TETAP BISA CEK ROLE MESKI LEWAT DM
     def __init__(self, cog_instance, tanggal_list, guild):
         self.cog_instance = cog_instance
         self.guild = guild
@@ -284,7 +326,6 @@ class HistoryDropdown(discord.ui.Select):
         
         sesi_realtime = self.cog_instance.voice_sessions if tanggal_dipilih == self.cog_instance.get_today_date() else None
         
-        # interaction.guild akan None jika diklik dari DM, jadi kita pakai backup self.guild
         guild_to_use = interaction.guild or self.guild
         
         embed = self.cog_instance.build_embed(guild_to_use, interaction.user, f"📜 History VC: {tanggal_dipilih}", data_history, sesi_realtime)
@@ -302,7 +343,6 @@ class HistoryView(discord.ui.View):
     def __init__(self, cog_instance, tanggal_list, guild):
         super().__init__(timeout=30.0) 
         self.message = None
-        # Teruskan parameter guild ke Dropdown
         self.add_item(HistoryDropdown(cog_instance, tanggal_list, guild))
 
     async def on_timeout(self):
