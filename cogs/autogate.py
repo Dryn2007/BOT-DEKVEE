@@ -434,6 +434,22 @@ class AutoGate(commands.Cog):
             try: await message.delete()
             except: pass
 
+    @commands.Cog.listener()
+    async def on_member_remove(self, member):
+        # Mengirim notifikasi ke channel pengumuman (bisa diubah ke channel lain jika mau)
+        pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
+        
+        if pengumuman_channel:
+            embed_leave = discord.Embed(
+                title="👋 Seseorang Telah Pergi...",
+                description=f"Sayonara **{member.display_name}** ({member.name}) telah keluar dari server Telyu Jekardah.",
+                color=discord.Color.red()
+            )
+            embed_leave.set_thumbnail(url=member.display_avatar.url)
+            
+            await pengumuman_channel.send(embed=embed_leave)
+            print(f"Member keluar: {member.name}")
+
 
 async def setup(bot):
     await bot.add_cog(AutoGate(bot))
