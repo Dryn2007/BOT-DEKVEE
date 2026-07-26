@@ -113,14 +113,13 @@ class StreakSystem(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.is_db_ready = False
-        # Menyimpan message_id pengingat yang sedang di-pin per prodi,
-        # supaya bisa di-unpin/dihapus saat streak akhirnya menyala
-        # atau saat pengingat baru dikirim.
         self.reminder_messages = {}
 
     def cog_unload(self):
         if self.reminder_loop.is_running():
             self.reminder_loop.cancel()
+        if self.midnight_check_loop.is_running():
+            self.midnight_check_loop.cancel()
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -149,20 +148,17 @@ class StreakSystem(commands.Cog):
             self.is_db_ready = True
             print("✅ Sistem Streak API siap!")
 
-        # Mulai loop pengingat streak (hanya sekali, walaupun on_ready bisa terpanggil berkali-kali)
+        # Mulai loop pengingat & loop tengah malam
         if not self.reminder_loop.is_running():
             self.reminder_loop.start()
+        if not self.midnight_check_loop.is_running():
+            self.midnight_check_loop.start()
 
     # ====================================================================
     # HELPER: Ambil ikon twemoji TANPA memblokir event loop bot
     # ====================================================================
     @staticmethod
     def _fetch_icon_sync(url, headers):
-        """
-        Fungsi ini berjalan di thread terpisah (lewat run_in_executor),
-        supaya requests.get() yang blocking TIDAK membekukan seluruh bot
-        selama proses download ikon berlangsung.
-        """
         try:
             res = requests.get(url, headers=headers, timeout=5)
             if res.status_code == 200:
@@ -176,7 +172,7 @@ class StreakSystem(commands.Cog):
         return await loop.run_in_executor(None, self._fetch_icon_sync, url, headers)
 
     # ====================================================================
-    # HELPER: Bersihkan pin pengingat streak (dipanggil saat streak menyala lagi)
+    # HELPER: Bersihkan pin pengingat streak
     # ====================================================================
     async def clear_reminder_pin(self, prodi_name):
         old_msg_id = self.reminder_messages.pop(prodi_name, None)
@@ -203,7 +199,7 @@ class StreakSystem(commands.Cog):
             pass
 
     # ====================================================================
-    # ENGINE GAMBAR EASY-PIL UNTUK PENGUMUMAN STREAK (UI PREMIUM)
+    # ENGINE GAMBAR EASY-PIL UNTUK PENGUMUMAN STREAK
     # ====================================================================
     async def kirim_kartu_pengumuman(self, ann_channel, prodi_name, new_streak, total_messages, filename):
         if not os.path.exists(filename):
@@ -211,32 +207,21 @@ class StreakSystem(commands.Cog):
             return
 
         try:
-            # 1. Canvas Utama
             background = Editor(Canvas((900, 350), color="#1A1C20"))
-
-            # 2. Hiasan Kotak Dalam & Aksen Warna
             background.rectangle((20, 20), width=860, height=310, color="#2B2D31", radius=30)
             background.rectangle((30, 50), width=12, height=250, color="#FF4500", radius=6)
-
-            # 3. Garis Pemisah (Divider)
             background.rectangle((350, 115), width=500, height=3, color="#1A1C20", radius=2)
 
-            # 4. Masukkan Maskot
             mascot = Editor(filename).resize((280, 280))
             background.paste(mascot, (60, 35))
 
-            # 5. Konfigurasi Font
             font_super = Font.poppins(size=25, variant="bold")
             font_title = Font.poppins(size=65, variant="bold")
             font_badge = Font.poppins(size=22, variant="bold")
 
-            # 6. Teks Utama
             background.text((350, 50), "MILESTONE UNLOCKED!", font=font_super, color="#FFD700")
             background.text((350, 80), f"PRODI {prodi_name}", font=font_title, color="#FFFFFF")
 
-            # ==========================================
-            # RENDER IKON & TEKS TENGAH (ANTI-CRASH)
-            # ==========================================
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
             def get_text_width(text_str):
@@ -246,51 +231,40 @@ class StreakSystem(commands.Cog):
                     try:
                         return int(font_badge.getsize(text_str)[0])
                     except Exception:
-                        return int(len(text_str) * 14)  # Fallback terakhir jika semua gagal
+                        return int(len(text_str) * 14)
 
-            # 7. Badge / Pill 1: STREAK API (Kapsul Oranye)
+            # Badge 1: STREAK API
             background.rectangle((350, 150), width=260, height=60, color="#FF4500", radius=30)
-
             text_streak = f"{new_streak} DAYS STREAK"
             width_streak = get_text_width(text_streak)
-            total_streak = 28 + 8 + width_streak  # 28 (lebar ikon), 8 (jarak ikon & teks)
-
+            total_streak = 28 + 8 + width_streak 
             start_x_streak = int(480 - (total_streak / 2))
 
-            img_fire = await self.fetch_icon(
-                "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f525.png", headers
-            )
+            img_fire = await self.fetch_icon("https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f525.png", headers)
             if img_fire is not None:
                 try:
                     background.paste(Editor(img_fire.resize((28, 28))), (start_x_streak, 164))
-                except Exception:
+                except:
                     pass
-
             text_x_streak = start_x_streak + 28 + 8
             background.text((text_x_streak, 165), text_streak, font=font_badge, color="#FFFFFF", align="left")
 
-            # 8. Badge / Pill 2: TOTAL MESSAGES (Kapsul Abu-abu)
+            # Badge 2: TOTAL MESSAGES
             background.rectangle((630, 150), width=230, height=60, color="#1A1C20", radius=30)
-
             text_chat = f"{total_messages} CHATS"
             width_chat = get_text_width(text_chat)
             total_chat = 28 + 8 + width_chat
-
             start_x_chat = int(745 - (total_chat / 2))
 
-            img_chat = await self.fetch_icon(
-                "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4ac.png", headers
-            )
+            img_chat = await self.fetch_icon("https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4ac.png", headers)
             if img_chat is not None:
                 try:
                     background.paste(Editor(img_chat.resize((28, 28))), (start_x_chat, 164))
-                except Exception:
+                except:
                     pass
-
             text_x_chat = start_x_chat + 28 + 8
             background.text((text_x_chat, 165), text_chat, font=font_badge, color="#A5A7AA", align="left")
 
-            # 9. Teks Hiasan Bawah
             background.text((350, 260), "Keep the fire burning and never break the streak!", font=Font.poppins(size=18, variant="italic"), color="#80848E")
 
             file = discord.File(fp=background.image_bytes, filename="milestone.png")
@@ -346,60 +320,35 @@ class StreakSystem(commands.Cog):
             WHERE prodi_name = $1 AND chat_date = $2
         ''', prodi_name, today)
 
-        # TRIGGER STREAK (SET MIN_CHATTERS_PER_DAY)
+        # TRIGGER STREAK MENYALA
         if count >= MIN_CHATTERS_PER_DAY:
             record = await self.bot.pool.fetchrow(
-                'SELECT current_streak, last_active_date, total_messages, lost_streak FROM prodi_streaks WHERE prodi_name = $1',
+                'SELECT current_streak, last_active_date, total_messages FROM prodi_streaks WHERE prodi_name = $1',
                 prodi_name
             )
 
-            new_streak = 1
-            lost_streak_value = 0
-            streak_mati = False
-            total_messages_saat_ini = record['total_messages'] if record else 1
-
             if record:
-                last_date = record['last_active_date']
-                if last_date == today:
+                # Jika hari ini sudah menyala, abaikan
+                if record['last_active_date'] == today:
                     return
-                elif last_date == yesterday:
+
+                new_streak = 1
+                # Jika kemarin aktif (atau baru dipulihkan), tambah +1
+                if record['last_active_date'] == yesterday:
                     new_streak = record['current_streak'] + 1
-                    lost_streak_value = record.get('lost_streak', 0)
-                else:
-                    lost_streak_value = record['current_streak']
-                    new_streak = 1
-                    if lost_streak_value > 0:
-                        streak_mati = True
 
-            # Simpan Streak
-            await self.bot.pool.execute('''
-                UPDATE prodi_streaks 
-                SET current_streak = $1, last_active_date = $2, lost_streak = $3 
-                WHERE prodi_name = $4
-            ''', new_streak, today, lost_streak_value, prodi_name)
+                total_messages_saat_ini = record['total_messages']
 
-            # Streak sudah menyala hari ini -> hapus pengingat yang mungkin masih ke-pin
-            await self.clear_reminder_pin(prodi_name)
+                # Update status streak
+                await self.bot.pool.execute('''
+                    UPDATE prodi_streaks 
+                    SET current_streak = $1, last_active_date = $2 
+                    WHERE prodi_name = $3
+                ''', new_streak, today, prodi_name)
 
-            if streak_mati:
-                # Reset total chat kembali ke 0 karena streaknya mati
-                await self.bot.pool.execute('UPDATE prodi_streaks SET total_messages = 0 WHERE prodi_name = $1', prodi_name)
+                # Streak sudah menyala -> bersihkan reminder pin yang tersisa
+                await self.clear_reminder_pin(prodi_name)
 
-                embed_mati = discord.Embed(
-                    title="💔 STREAK API MATI!",
-                    description=f"Oh tidak! Kalian tidak mencapai target harian kemarin, sehingga Streak **{lost_streak_value} Hari** kalian hangus!\n\n"
-                                "Tapi tenang, kalian bisa **PULIHKAN STREAK** ini sekarang juga.\n"
-                                f"⚠️ **Syarat:** Seluruh member {prodi_name} akan kehilangan **50% XP dan Level**.\n"
-                                "Silakan klik tombol di bawah jika kalian berani berkorban!",
-                    color=discord.Color.dark_red()
-                )
-                view = RestoreConfirmView(self, prodi_name, lost_streak_value)
-                msg_pin = await message.channel.send(embed=embed_mati, view=view)
-                try:
-                    await msg_pin.pin(reason="Pemberitahuan Kematian Streak")
-                except:
-                    pass
-            else:
                 notif_embed = discord.Embed(
                     title="🔥 API STREAK MENYALA! 🔥",
                     description=f"Kalian luar biasa! Target ngobrol harian tercapai.\nStreak **{prodi_name}** hari ini aman di angka **{new_streak} Hari**!",
@@ -412,6 +361,71 @@ class StreakSystem(commands.Cog):
                     if ann_channel:
                         filename = f"{prodi_name.lower()}_{new_streak}.png"
                         await self.kirim_kartu_pengumuman(ann_channel, prodi_name, new_streak, total_messages_saat_ini, filename)
+
+    # ====================================================================
+    # LOOP: CEK KEMATIAN STREAK OTOMATIS SETIAP TENGAH MALAM (00:01 WIB)
+    # ====================================================================
+    @tasks.loop(time=time(hour=0, minute=1, tzinfo=WIB))
+    async def midnight_check_loop(self):
+        if not self.is_db_ready:
+            return
+
+        today = datetime.now(WIB).date()
+        yesterday = today - timedelta(days=1)
+
+        for channel_id, prodi_name in PRODI_ROOMS.items():
+            try:
+                channel = self.bot.get_channel(channel_id)
+                if not channel:
+                    continue
+
+                record = await self.bot.pool.fetchrow(
+                    'SELECT current_streak, last_active_date FROM prodi_streaks WHERE prodi_name = $1',
+                    prodi_name
+                )
+
+                if record:
+                    last_date = record['last_active_date']
+                    current_streak = record['current_streak']
+
+                    # Jika last_active_date lebih lama dari kemarin dan streak masih > 0,
+                    # Berarti kemarin mereka bolos & streak MATI!
+                    if last_date and last_date < yesterday and current_streak > 0:
+                        # Update DB: Matikan streak, simpan nilai lost_streak, dan reset total chat
+                        await self.bot.pool.execute('''
+                            UPDATE prodi_streaks 
+                            SET lost_streak = $1, current_streak = 0, total_messages = 0
+                            WHERE prodi_name = $2
+                        ''', current_streak, prodi_name)
+
+                        # Kirim Embed & Tombol Pemulihan Otomatis ke Room Prodi
+                        embed_mati = discord.Embed(
+                            title="💔 STREAK API MATI!",
+                            description=f"Waktu telah berganti hari dan kalian tidak mencapai target harian kemarin!\n"
+                                        f"Streak **{current_streak} Hari** milik **{prodi_name}** telah hangus! 😭\n\n"
+                                        "Tapi tenang, kalian bisa **PULIHKAN STREAK** ini sekarang juga.\n"
+                                        f"⚠️ **Syarat:** Seluruh member {prodi_name} akan kehilangan **50% XP dan Level**.\n"
+                                        "Silakan klik tombol di bawah jika kalian berani berkorban!",
+                            color=discord.Color.dark_red()
+                        )
+                        view = RestoreConfirmView(self, prodi_name, current_streak)
+                        msg_pin = await channel.send(embed=embed_mati, view=view)
+                        try:
+                            await msg_pin.pin(reason="Pemberitahuan Kematian Streak Otomatis Tengah Malam")
+                        except:
+                            pass
+
+                        # PENGUMUMAN KEMATIAN KE ROOM STREAK
+                        ann_channel = self.bot.get_channel(STREAK_ANNOUNCEMENT_ID)
+                        if ann_channel:
+                            await ann_channel.send(f"🚨 **KABAR DUKA** 🚨\nSayang sekali, streak api **{prodi_name}** sebanyak **{current_streak} Hari** telah padam hari ini! 💔")
+
+            except Exception as e:
+                print(f"[Error Midnight Check] Gagal cek {prodi_name}: {e}")
+
+    @midnight_check_loop.before_loop
+    async def before_midnight_check_loop(self):
+        await self.bot.wait_until_ready()
 
     # ====================================================================
     # LOOP: PENGINGAT STREAK HARIAN JAM 19:00 WIB
@@ -445,8 +459,6 @@ class StreakSystem(commands.Cog):
 
                 sisa = max(0, MIN_CHATTERS_PER_DAY - count)
 
-                # Hapus pengingat lama (kalau ada) sebelum kirim & pin yang baru,
-                # supaya tidak numpuk banyak pesan ter-pin.
                 old_msg_id = self.reminder_messages.get(prodi_name)
                 if old_msg_id:
                     try:
@@ -469,7 +481,6 @@ class StreakSystem(commands.Cog):
                 )
                 embed.set_footer(text="Pengingat harian pukul 19:00 WIB sampai streak menyala")
 
-                # Tag role prodi (kalau rolenya ada) biar member ke-notif
                 role = discord.utils.get(channel.guild.roles, name=prodi_name)
                 content = role.mention if role else None
 
@@ -493,7 +504,7 @@ class StreakSystem(commands.Cog):
         await self.bot.wait_until_ready()
 
     # ====================================================================
-    # COMMAND: SET STREAK (UNTUK TESTING MILESTONE INSTAN)
+    # COMMAND: SET STREAK (TANPA NOTIF DI ROOM PRODI)
     # ====================================================================
     @commands.command()
     @commands.has_permissions(administrator=True)
@@ -522,14 +533,44 @@ class StreakSystem(commands.Cog):
                 last_active_date = EXCLUDED.last_active_date
         ''', prodi, jumlah, today, real_total_messages)
 
-        # Streak disuntik menyala hari ini -> bersihkan pengingat yang mungkin masih ke-pin
         await self.clear_reminder_pin(prodi)
 
-        await ctx.send(f"✅ Streak **{prodi}** berhasil disuntik menjadi **{jumlah} Hari** (Total chat asli tercatat: {real_total_messages}).")
+        # Hanya mengirim notif di room admin tempat command dipanggil, room prodi tetap sunyi
+        await ctx.send(f"✅ (SILENT) Streak **{prodi}** berhasil disuntik menjadi **{jumlah} Hari** (Total chat asli tercatat: {real_total_messages}).")
 
-        # =========================================================
-        # FIX: MUNCULKAN EMBED NOTIFIKASI DI ROOM PRODI TERKAIT
-        # =========================================================
+        # Kirim kartu gambar jika masuk milestone
+        if jumlah in MILESTONES:
+            ann_channel = self.bot.get_channel(STREAK_ANNOUNCEMENT_ID)
+            if ann_channel:
+                filename = f"{prodi.lower()}_{jumlah}.png"
+                await self.kirim_kartu_pengumuman(ann_channel, prodi, jumlah, real_total_messages, filename)
+
+    # ====================================================================
+    # COMMAND BARU: MEMUNCULKAN UI PEMULIHAN SECARA MANUAL INSTAN
+    # ====================================================================
+    @commands.command()
+    @commands.has_permissions(administrator=True)
+    async def spawnrestore(self, ctx, prodi: str = None, lost_streak: int = None):
+        """Memunculkan tombol pemulihan di room prodi secara instan."""
+        if not prodi or lost_streak is None:
+            await ctx.send("⚠️ Format salah! Gunakan: `!spawnrestore <NamaProdi> <JumlahStreakHangus>`\nContoh: `!spawnrestore DKV 15`")
+            return
+
+        prodi = prodi.upper()
+        if prodi not in PRODI_ROOMS.values():
+            await ctx.send(f"⚠️ Prodi **{prodi}** tidak valid.")
+            return
+
+        dua_hari_lalu = datetime.now(WIB).date() - timedelta(days=2)
+
+        # Update DB: matikan streak, masukkan nilai lost_streak
+        await self.bot.pool.execute('''
+            UPDATE prodi_streaks
+            SET lost_streak = $1, current_streak = 0, last_active_date = $2, total_messages = 0
+            WHERE prodi_name = $3
+        ''', lost_streak, dua_hari_lalu, prodi)
+
+        # Cari room prodi terkait
         target_channel_id = None
         for cid, pname in PRODI_ROOMS.items():
             if pname == prodi:
@@ -539,19 +580,28 @@ class StreakSystem(commands.Cog):
         if target_channel_id:
             target_channel = self.bot.get_channel(target_channel_id)
             if target_channel:
-                notif_embed = discord.Embed(
-                    title="🔥 API STREAK MENYALA! 🔥",
-                    description=f"Kalian luar biasa! Target ngobrol harian tercapai.\nStreak **{prodi}** hari ini aman di angka **{jumlah} Hari**!",
-                    color=discord.Color.orange()
+                embed_mati = discord.Embed(
+                    title="💔 STREAK API MATI!",
+                    description=f"Oh tidak! Streak **{lost_streak} Hari** kalian telah putus!\n\n"
+                                "Tapi tenang, kalian bisa **PULIHKAN STREAK** ini sekarang juga.\n"
+                                f"⚠️ **Syarat:** Seluruh member {prodi} akan kehilangan **50% XP dan Level**.\n"
+                                "Silakan klik tombol di bawah jika kalian berani berkorban!",
+                    color=discord.Color.dark_red()
                 )
-                await target_channel.send(embed=notif_embed)
+                view = RestoreConfirmView(self, prodi, lost_streak)
+                msg_pin = await target_channel.send(embed=embed_mati, view=view)
+                try:
+                    await msg_pin.pin(reason="Pemberitahuan Kematian Streak (Manual Spawn)")
+                except:
+                    pass
 
-        # Kirim kartu gambar jika masuk milestone
-        if jumlah in MILESTONES:
-            ann_channel = self.bot.get_channel(STREAK_ANNOUNCEMENT_ID)
-            if ann_channel:
-                filename = f"{prodi.lower()}_{jumlah}.png"
-                await self.kirim_kartu_pengumuman(ann_channel, prodi, jumlah, real_total_messages, filename)
+        # PENGUMUMAN KEMATIAN KE ROOM STREAK
+        ann_channel = self.bot.get_channel(STREAK_ANNOUNCEMENT_ID)
+        if ann_channel:
+            await ann_channel.send(f"🚨 **KABAR DUKA** 🚨\nSayang sekali, streak api **{prodi}** sebanyak **{lost_streak} Hari** telah padam! 💔")
+
+        # Notifikasi sukses untuk admin
+        await ctx.send(f"✅ UI Pemulihan untuk **{prodi}** berhasil dimunculkan dengan riwayat {lost_streak} Hari.")
 
     # ====================================================================
     # COMMAND: MATIKAN STREAK & KEMBALIKAN XP
@@ -607,6 +657,11 @@ class StreakSystem(commands.Cog):
                     await msg_pin.pin(reason="Pemberitahuan Kematian Streak")
                 except:
                     pass
+        
+        # PENGUMUMAN KEMATIAN KE ROOM STREAK
+        ann_channel = self.bot.get_channel(STREAK_ANNOUNCEMENT_ID)
+        if ann_channel:
+            await ann_channel.send(f"🚨 **KABAR DUKA** 🚨\nSayang sekali, streak api **{prodi}** sebanyak **{current_streak} Hari** telah padam! 💔")
 
     @commands.command()
     @commands.has_permissions(administrator=True)
