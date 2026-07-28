@@ -43,25 +43,28 @@ class SoundboardPanel(View):
         # 4. Beri respon sukses secara private (ephemeral)
         await interaction.response.send_message(f"🔊 Memutar soundboard `{sound_name.upper()}` (-2 Koin)", ephemeral=True)
 
-        # 5. Masukkan bot ke Voice Channel
-        voice_channel = interaction.user.voice.channel
-        vc = discord.utils.get(self.cog.bot.voice_clients, guild=interaction.guild)
-
-        if not vc:
-            vc = await voice_channel.connect()
-        elif vc.channel != voice_channel:
-            await vc.move_to(voice_channel)
-
-        # 6. Hentikan suara sebelumnya (jika ada) lalu putar yang baru
-        if vc.is_playing():
-            vc.stop()
-
+        # 5. Masukkan bot ke Voice Channel (DENGAN PENJEBAK ERROR)
         try:
+            voice_channel = interaction.user.voice.channel
+            vc = discord.utils.get(self.cog.bot.voice_clients, guild=interaction.guild)
+            
+            if not vc:
+                # Tambahkan timeout agar bot tidak nge-hang jika jaringan Heroku lambat
+                vc = await voice_channel.connect(timeout=10.0)
+            elif vc.channel != voice_channel:
+                await vc.move_to(voice_channel)
+
+            # 6. Hentikan suara sebelumnya (jika ada) lalu putar yang baru
+            if vc.is_playing():
+                vc.stop()
+
             source = discord.FFmpegPCMAudio(file_path)
             vc.play(source)
-        except Exception as e:
-            print(f"Error memutar audio {sound_name}: {e}")
 
+        except Exception as e:
+            # JIKA GAGAL, ERRORNYA AKAN DIKIRIM LANGSUNG KE DISCORD!
+            await interaction.followup.send(f"⚠️ **Sistem mendeteksi Error:**\n```py\n{e}\n```", ephemeral=True)
+            print(f"ERROR SOUNDBOARD: {e}", flush=True)
     # --- DERETAN 8 TOMBOL SOUNDBOARD ---
     
     # Baris 1 (row=0)
