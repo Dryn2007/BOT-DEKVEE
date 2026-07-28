@@ -43,7 +43,7 @@ class NewFeatureModal(Modal, title="Fitur Baru / Hapus Fitur"):
         )
 
 
-class UpdateFeatureModal(Modal, title="Update / Pembaruan Fitur"):
+class UpdateFeatureModal(Modal, title="Update / Pembaruan 1 Fitur"):
     def __init__(self, bot):
         super().__init__()
         self.bot = bot
@@ -72,6 +72,32 @@ class UpdateFeatureModal(Modal, title="Update / Pembaruan Fitur"):
             sesudah=self.kondisi_sesudah.value
         )
 
+# --- MODAL BARU: MULTI UPDATE / PATCH NOTES ---
+class MultiUpdateModal(Modal, title="Patch Notes (Multi Update)"):
+    def __init__(self, bot):
+        super().__init__()
+        self.bot = bot
+
+    judul_update = TextInput(
+        label="Judul Rangkuman Update", 
+        placeholder="Contoh: Pembaruan Besar-besaran v2.0!",
+        max_length=100
+    )
+    isi_update = TextInput(
+        label="Isi Pembaruan (Gunakan bullet points)", 
+        style=discord.TextStyle.paragraph, 
+        placeholder="- Koin sekarang bisa dipakai untuk Music\n- Dashboard ditambah kategori Sultan\n- Anti-spam ditambahkan",
+        max_length=3000
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await send_announcement_embed(
+            interaction, self.bot, 
+            update_type="multi", 
+            nama=self.judul_update.value, 
+            deskripsi=self.isi_update.value
+        )
+
 
 # ==========================================
 # UI VIEW (Dashboard Buttons Persisten)
@@ -86,20 +112,22 @@ class DashboardView(View):
     async def btn_new_feature(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(NewFeatureModal(self.bot))
 
-    @discord.ui.button(label="🔄 Update Fitur", style=discord.ButtonStyle.primary, custom_id="persistent_btn_update")
+    @discord.ui.button(label="🔄 Update 1 Fitur", style=discord.ButtonStyle.primary, custom_id="persistent_btn_update")
     async def btn_update_feature(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(UpdateFeatureModal(self.bot))
 
-    # --- TOMBOL MAINTENANCE HANYA UNTUK PENGUMUMAN ---
+    # --- TOMBOL BARU UNTUK MULTI UPDATE ---
+    @discord.ui.button(label="📑 Patch Notes (Multi)", style=discord.ButtonStyle.secondary, custom_id="persistent_btn_multi")
+    async def btn_multi_update(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(MultiUpdateModal(self.bot))
+
     @discord.ui.button(label="⚠️ Toggle Maintenance", style=discord.ButtonStyle.danger, custom_id="persistent_btn_maintenance")
     async def btn_maintenance(self, interaction: discord.Interaction, button: Button):
-        # Membalikkan status untuk mengubah teks pengumuman
         self.bot.maintenance_mode = not getattr(self.bot, 'maintenance_mode', False)
         
         status_text = "Dinyalakan 🔴" if self.bot.maintenance_mode else "Dimatikan 🟢"
         await interaction.response.send_message(f"✅ Pengumuman Maintenance **{status_text}** berhasil dikirim ke publik.", ephemeral=True)
         
-        # Otomatis kirim pengumuman ke publik
         channel = self.bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
         if channel:
             embed = discord.Embed(
@@ -129,9 +157,16 @@ async def send_announcement_embed(interaction, bot, update_type, nama, jenis=Non
 
     tanggal_hari_ini = datetime.now().strftime("%d %B %Y")
     
+    # Menyesuaikan warna berdasarkan tipe update
+    color_map = {
+        "new_or_remove": discord.Color.brand_green(),
+        "update": discord.Color.blue(),
+        "multi": discord.Color.purple()
+    }
+    
     embed = discord.Embed(
         title=f"🚀 UPDATE BOT TERBARU - {tanggal_hari_ini}",
-        color=discord.Color.brand_green() if update_type == "new_or_remove" else discord.Color.blue(),
+        color=color_map.get(update_type, discord.Color.gold()),
         timestamp=datetime.now()
     )
 
@@ -147,6 +182,12 @@ async def send_announcement_embed(interaction, bot, update_type, nama, jenis=Non
         embed.add_field(name="🔄 Nama Fitur", value=f"**{nama}**", inline=False)
         embed.add_field(name="❌ Sebelum", value=f"> {sebelum}", inline=False)
         embed.add_field(name="✅ Sesudah", value=f"> {sesudah}", inline=False)
+        
+    # --- HANDLER BARU UNTUK MULTI UPDATE ---
+    elif update_type == "multi":
+        embed.description = f"Ada banyak peningkatan dan perbaikan (Patch Notes) yang baru saja diterapkan!\n\n**📌 {nama}**"
+        # Menampilkan deskripsi di dalam field agar rapi
+        embed.add_field(name="Daftar Perubahan:", value=f"{deskripsi}", inline=False)
 
     embed.set_footer(text=f"Diupdate oleh {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
 
@@ -162,7 +203,6 @@ class BotUpdater(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         
-        # Variabel sebagai penanda (flag) untuk toggle teks pengumuman
         if not hasattr(self.bot, 'maintenance_mode'):
             self.bot.maintenance_mode = False
 
@@ -186,8 +226,9 @@ class BotUpdater(commands.Cog):
             description=(
                 "Silakan pilih jenis pengumuman yang ingin dikirimkan ke publik.\n\n"
                 "**Panduan:**\n"
-                "`✨ Fitur Baru / Hapus` : Gunakan jika ada sistem yang baru ditambahkan atau dihapus.\n"
-                "`🔄 Update Fitur` : Gunakan jika ada perubahan sistem.\n"
+                "`✨ Fitur Baru / Hapus` : Gunakan untuk 1 fitur yang baru rilis/dihapus.\n"
+                "`🔄 Update 1 Fitur` : Gunakan untuk membandingkan (Sebelum/Sesudah) 1 fitur.\n"
+                "`📑 Patch Notes (Multi)` : **[BARU]** Gunakan untuk merangkum banyak perubahan sekaligus (Bullet points).\n"
                 "`⚠️ Toggle Maintenance` : Kirim pengumuman bahwa bot sedang/selesai maintenance."
             ),
             color=discord.Color.dark_grey()
