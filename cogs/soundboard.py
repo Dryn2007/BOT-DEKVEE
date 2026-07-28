@@ -1,39 +1,138 @@
 import discord
 from discord.ext import commands
-import asyncio
+from discord.ui import View, Button
+import os
 
+# ==========================================
+# UI PANEL SOUNDBOARD
+# ==========================================
+class SoundboardPanel(View):
+    def __init__(self, cog):
+        # timeout=None agar tombol awet selamanya
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    # Fungsi utama untuk memutar suara dan memotong koin
+    async def play_sound(self, interaction: discord.Interaction, sound_name: str):
+        # 1. Cek apakah user sedang berada di Voice Channel
+        if not interaction.user.voice or not interaction.user.voice.channel:
+            await interaction.response.send_message("❌ Masuk room voice dulu ya buat muter soundboard!", ephemeral=True)
+            return
+
+        # 2. Cek apakah file MP3-nya ada di folder 'sounds'
+        file_path = f"sounds/{sound_name}.mp3"
+        if not os.path.exists(file_path):
+            await interaction.response.send_message(f"❌ File suara `{sound_name}.mp3` belum ditambahkan oleh Admin ke folder sounds.", ephemeral=True)
+            return
+
+        # 3. Eksekusi pemotongan 2 koin
+        has_enough = await self.cog.deduct_coins(interaction.user.id, 2)
+        if not has_enough:
+            await interaction.response.send_message("🪙 Saldo koin kamu tidak cukup! Butuh **2 Koin** untuk fitur ini.", ephemeral=True)
+            return
+
+        # 4. Beri respon sukses secara private (ephemeral)
+        await interaction.response.send_message(f"🔊 Memutar soundboard `{sound_name.upper()}` (-2 Koin)", ephemeral=True)
+
+        # 5. Masukkan bot ke Voice Channel
+        voice_channel = interaction.user.voice.channel
+        vc = discord.utils.get(self.cog.bot.voice_clients, guild=interaction.guild)
+
+        if not vc:
+            vc = await voice_channel.connect()
+        elif vc.channel != voice_channel:
+            await vc.move_to(voice_channel)
+
+        # 6. Hentikan suara sebelumnya (jika ada) lalu putar yang baru
+        if vc.is_playing():
+            vc.stop()
+
+        try:
+            source = discord.FFmpegPCMAudio(file_path)
+            vc.play(source)
+        except Exception as e:
+            print(f"Error memutar audio {sound_name}: {e}")
+
+    # --- DERETAN 8 TOMBOL SOUNDBOARD (SESUAI GAMBAR) ---
+    
+    # Baris 1 (row=0)
+    @discord.ui.button(label="Kaget", emoji="🤯", style=discord.ButtonStyle.secondary, row=0, custom_id="sb_kaget")
+    async def btn_1(self, interaction: discord.Interaction, button: Button):
+        await self.play_sound(interaction, "kaget")
+
+    @discord.ui.button(label="Victory", emoji="🐦", style=discord.ButtonStyle.secondary, row=0, custom_id="sb_victory")
+    async def btn_2(self, interaction: discord.Interaction, button: Button):
+        await self.play_sound(interaction, "victory")
+
+    @discord.ui.button(label="Siren", emoji="🚨", style=discord.ButtonStyle.secondary, row=0, custom_id="sb_siren")
+    async def btn_3(self, interaction: discord.Interaction, button: Button):
+        await self.play_sound(interaction, "siren")
+
+    # Baris 2 (row=1)
+    @discord.ui.button(label="FAHH", emoji="😆", style=discord.ButtonStyle.secondary, row=1, custom_id="sb_fahh")
+    async def btn_4(self, interaction: discord.Interaction, button: Button):
+        await self.play_sound(interaction, "fahh")
+
+    @discord.ui.button(label="ketawa", emoji="🥰", style=discord.ButtonStyle.secondary, row=1, custom_id="sb_ketawa")
+    async def btn_5(self, interaction: discord.Interaction, button: Button):
+        await self.play_sound(interaction, "ketawa")
+
+    @discord.ui.button(label="WELKAM", emoji="👋", style=discord.ButtonStyle.secondary, row=1, custom_id="sb_welkam")
+    async def btn_6(self, interaction: discord.Interaction, button: Button):
+        await self.play_sound(interaction, "welkam")
+
+    # Baris 3 (row=2)
+    @discord.ui.button(label="Pou", emoji="😜", style=discord.ButtonStyle.secondary, row=2, custom_id="sb_pou")
+    async def btn_7(self, interaction: discord.Interaction, button: Button):
+        await self.play_sound(interaction, "pou")
+
+    @discord.ui.button(label="IWAK TEMPE", emoji="🐡", style=discord.ButtonStyle.secondary, row=2, custom_id="sb_iwaktempe")
+    async def btn_8(self, interaction: discord.Interaction, button: Button):
+        await self.play_sound(interaction, "iwak_tempe")
+
+
+# ==========================================
+# COG SOUNDBOARD
+# ==========================================
 class Soundboard(commands.Cog):
     def __init__(self, bot, pool):
         self.bot = bot
         self.pool = pool
 
+    @commands.Cog.listener()
+    async def on_ready(self):
+        self.bot.add_view(SoundboardPanel(self))
+
     async def deduct_coins(self, user_id, amount):
         data = await self.pool.fetchrow("SELECT coins FROM levels WHERE user_id = $1", user_id)
         if data and data['coins'] >= amount:
             await self.pool.execute("UPDATE levels SET coins = coins - $1 WHERE user_id = $2", amount, user_id)
+            await self.pool.execute(
+                "INSERT INTO coin_logs (user_id, amount, description) VALUES ($1, $2, $3)", 
+                user_id, -amount, "Memutar Efek Soundboard"
+            )
             return True
         return False
 
-    @commands.command(name="sb")
-    async def play_soundboard(self, ctx, sound_name: str):
+    @commands.command(name="panelsb")
+    @commands.has_permissions(administrator=True)
+    async def spawn_sb_panel(self, ctx):
+        """Memunculkan Panel UI Soundboard (Hanya Admin)"""
         try: await ctx.message.delete()
         except: pass
-
-        if not ctx.author.voice or not ctx.author.voice.channel:
-            await ctx.send("Masuk room voice dulu ya!", delete_after=5.0)
-            return
-
-        # Potong 2 koin untuk 1x pencet soundboard
-        has_enough_coins = await self.deduct_coins(ctx.author.id, 2)
-        if not has_enough_coins:
-            await ctx.send("Koin kamu tidak cukup! Butuh 2 koin untuk Soundboard.", delete_after=5.0)
-            return
-
-        # Logika memutar file audio soundboard (misal pakai FFmpeg)
-        # ...
         
-        # Notifikasi sukses yang tidak berisik (tanpa suara, langsung hilang)
-        await ctx.send(f"🔊 {ctx.author.mention} memutar soundboard `{sound_name}` (-2 Koin)", delete_after=3.0)
+        embed = discord.Embed(
+            title="🎛️ DekVee Soundboard Panel",
+            description=(
+                "Klik tombol di bawah untuk memutar efek suara ke dalam Voice Channel!\n\n"
+                "🪙 **Biaya:** `2 Koin` per klik\n"
+                "🗣️ **Syarat:** Kamu wajib berada di dalam Voice Channel terlebih dahulu."
+            ),
+            color=discord.Color.brand_green()
+        )
+        embed.set_footer(text="Panel interaktif oleh DekVee", icon_url=self.bot.user.display_avatar.url)
+        
+        await ctx.send(embed=embed, view=SoundboardPanel(self))
 
 async def setup(bot):
     await bot.add_cog(Soundboard(bot, bot.pool))
