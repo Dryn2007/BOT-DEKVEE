@@ -45,12 +45,13 @@ def try_create_instance():
             )
         )
         return "SUCCESS"
-    except oci.exceptions.ServiceError as e:
-        # Menangkap error kapasitas dengan aman
-        if "Out of capacity" in str(e) or "Out of host capacity" in str(e):
+    except Exception as e:
+        # Menangkap SEMUA error dengan aman agar bot tidak stuck
+        error_msg = str(e)
+        if "Out of capacity" in error_msg or "Out of host capacity" in error_msg:
             return "CAPACITY"
         else:
-            return f"ERROR: {e}"
+            return f"ERROR SISTEM: {error_msg}"
 
 # ==========================================
 # 3. CLASS COG ORACLE WAR
