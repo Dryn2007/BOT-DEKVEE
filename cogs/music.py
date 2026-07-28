@@ -50,7 +50,6 @@ class Music(commands.Cog):
         self.pool = pool
         self.music_sessions = {} 
 
-        # Mengembalikan settingan dasar yang aman dan tanpa cookies
         self.YDL_OPTIONS = {
             'format': 'bestaudio/best', 
             'noplaylist': True, 
@@ -173,7 +172,7 @@ class Music(commands.Cog):
             print(f"Error yt-dlp: {e}")
             await loading_msg.edit(content=f"❌ **Gagal memproses lagu.**\n```py\n{e}\n```")
             
-            # Jika error mencari lagu, bot langsung keluar dari Voice Channel
+            # Jika error mencari lagu, bot langsung keluar
             if vc and vc.is_connected():
                 await vc.disconnect()
                 self.music_sessions.pop(ctx.guild.id, None)
@@ -187,13 +186,14 @@ class Music(commands.Cog):
             vc.stop()
 
         try:
-            source = await discord.FFmpegOpusAudio.from_probe(audio_url, **self.FFMPEG_OPTIONS)
+            # [PERBAIKAN] Menggunakan FFmpegPCMAudio yang sudah terbukti stabil di Soundboard
+            source = discord.FFmpegPCMAudio(audio_url, **self.FFMPEG_OPTIONS)
             vc.play(source)
         except Exception as e:
             print(f"Error FFmpeg: {e}")
             await loading_msg.edit(content=f"❌ **Terjadi kesalahan saat mencoba memutar audio:**\n```py\n{e}\n```")
             
-            # Jika error memutar lagu (FFmpeg crash), bot langsung keluar dari Voice Channel
+            # Jika error memutar lagu (FFmpeg crash), bot langsung keluar
             if vc and vc.is_connected():
                 await vc.disconnect()
                 self.music_sessions.pop(ctx.guild.id, None)
@@ -216,6 +216,9 @@ class Music(commands.Cog):
         await ctx.send(file=file, embed=embed, view=view)
 
         # 5. Sistem Otomatis Keluar (Auto-Disconnect) jika lagu habis
+        # [PERBAIKAN] Beri jeda 3 detik agar sistem punya waktu mendeteksi pemutaran lagu
+        await asyncio.sleep(3.0)
+        
         while vc.is_playing() or vc.is_paused():
             await asyncio.sleep(1.0)
 
