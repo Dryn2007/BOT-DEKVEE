@@ -186,9 +186,13 @@ class Music(commands.Cog):
             vc.stop()
 
         try:
-            # [PERBAIKAN] Menggunakan FFmpegPCMAudio yang sudah terbukti stabil di Soundboard
             source = discord.FFmpegPCMAudio(audio_url, **self.FFMPEG_OPTIONS)
-            vc.play(source)
+            
+            def tangkap_error_audio(err):
+                if err:
+                    print(f"Error dari dalam FFmpeg: {err}")
+                    
+            vc.play(source, after=tangkap_error_audio)
         except Exception as e:
             print(f"Error FFmpeg: {e}")
             await loading_msg.edit(content=f"❌ **Terjadi kesalahan saat mencoba memutar audio:**\n```py\n{e}\n```")
@@ -215,14 +219,26 @@ class Music(commands.Cog):
         await loading_msg.delete() 
         await ctx.send(file=file, embed=embed, view=view)
 
-        # 5. Sistem Otomatis Keluar (Auto-Disconnect) jika lagu habis
-        # [PERBAIKAN] Beri jeda 3 detik agar sistem punya waktu mendeteksi pemutaran lagu
-        await asyncio.sleep(3.0)
-        
+        # 5. Sistem Buffering & Auto-Disconnect Anti Bisu
+        # A. Tunggu maksimal 15 detik sampai lagu benar-benar mulai berbunyi (Buffering Heroku)
+        waktu_tunggu = 0
+        while not vc.is_playing() and waktu_tunggu < 15:
+            await asyncio.sleep(1.0)
+            waktu_tunggu += 1
+
+        # B. Jika setelah 15 detik tetap tidak bunyi, bot keluar otomatis
+        if not vc.is_playing() and not vc.is_paused():
+            await ctx.send("⚠️ **Gagal memutar audio.** Waktu tunggu habis (Streaming macet dari pusat).")
+            if vc and vc.is_connected():
+                await vc.disconnect()
+                self.music_sessions.pop(ctx.guild.id, None)
+            return
+
+        # C. Tunggu sampai lagunya benar-benar habis atau di-stop
         while vc.is_playing() or vc.is_paused():
             await asyncio.sleep(1.0)
 
-        # Jika sudah tidak play dan tidak pause (artinya lagu habis/stop)
+        # D. Keluar saat lagu sudah selesai / distop
         if vc and vc.is_connected() and not vc.is_playing() and not vc.is_paused():
             await vc.disconnect()
             self.music_sessions.pop(ctx.guild.id, None)
