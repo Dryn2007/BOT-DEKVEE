@@ -87,8 +87,9 @@ class PrivateHelpDropdown(discord.ui.Select):
             )
             embed.add_field(name="`!clear`", value="**Akses:** Owner Bot\n**Fungsi:** Menghapus (purge) pesan di channel (default 5, max 100).", inline=False)
             embed.add_field(name="`!spawnstats`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memaksa dashboard statistik muncul ulang.", inline=False)
-            embed.add_field(name="`!testxp <jumlah>`", value="**Akses:** Administrator\n**Fungsi:** Mode testing untuk suntik XP ke akun sendiri secara instan.", inline=False)
             embed.add_field(name="`!spawnhelp`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memunculkan ulang dashboard help secara paksa.", inline=False)
+            embed.add_field(name="`!testxp <jumlah>`", value="**Akses:** Administrator\n**Fungsi:** Mode testing untuk suntik XP ke akun sendiri secara instan.", inline=False)
+            embed.add_field(name="`!synckoin`", value="**Akses:** Administrator\n**Fungsi:** Sinkronisasi manual untuk membagikan koin kompensasi berdasarkan akumulasi XP dan Level member lama.", inline=False)
 
         self.placeholder = f"Sedang melihat: {val}"
         await interaction.response.edit_message(embed=embed, view=self.view)
