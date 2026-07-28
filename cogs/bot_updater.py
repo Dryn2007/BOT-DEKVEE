@@ -90,7 +90,7 @@ class MultiUpdateModal(Modal, title="Patch Notes (Multi Update)"):
     isi_update = TextInput(
         label="Isi Pembaruan (Gunakan bullet points)", 
         style=discord.TextStyle.paragraph, 
-        placeholder="- Koin sekarang bisa dipakai untuk Music\n- Dashboard ditambah kategori Sultan\n- Anti-spam ditambahkan",
+        placeholder="- Koin skrng bisa dipakai untuk Music\n- Dashboard ditambah kategori Sultan\n- Anti-spam ditambahkan",
         max_length=3000
     )
 
