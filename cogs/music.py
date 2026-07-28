@@ -124,7 +124,7 @@ class Music(commands.Cog):
         vc = discord.utils.get(self.bot.voice_clients, guild=ctx.guild)
 
         if not vc:
-            vc = await voice_channel.connect()
+            vc = await voice_channel.connect(timeout=10.0)
         elif vc.channel != voice_channel:
             await vc.move_to(voice_channel)
 
@@ -137,10 +137,13 @@ class Music(commands.Cog):
         loading_msg = await ctx.send("⏳ Sedang memproses audio, mohon tunggu sebentar...")
 
         # --- EKSEKUSI PENERJEMAH LINK ---
-        original_query = query
         if "spotify.com" in query or "apple.com" in query:
-            await loading_msg.edit(content="🔍 Membaca link musik...")
+            await loading_msg.edit(content="🔍 Membaca link musik Spotify/Apple...")
             query = await self.convert_link(query)
+
+        # [BARU] Paksa yt-dlp melakukan pencarian jika teks bukan berupa link murni
+        if not query.startswith("http"):
+            query = f"ytsearch:{query}"
 
         # 2. Proses Pencarian dengan yt-dlp
         loop = asyncio.get_event_loop()
@@ -156,8 +159,9 @@ class Music(commands.Cog):
                 
         except Exception as e:
             print(f"Error yt-dlp: {e}")
-            await loading_msg.edit(content="❌ Gagal memutar lagu. Coba gunakan link YouTube atau ketik judul lagunya langsung.")
-            await asyncio.sleep(5)
+            # Tampilkan pesan error ke Discord agar mudah dicek
+            await loading_msg.edit(content=f"❌ **Gagal memproses lagu.**\n```py\n{e}\n```")
+            await asyncio.sleep(10)
             await loading_msg.delete()
             return
 
@@ -170,7 +174,7 @@ class Music(commands.Cog):
             vc.play(source)
         except Exception as e:
             print(f"Error FFmpeg: {e}")
-            await loading_msg.edit(content="❌ Terjadi kesalahan saat mencoba memutar audio.")
+            await loading_msg.edit(content=f"❌ **Terjadi kesalahan saat mencoba memutar audio:**\n```py\n{e}\n```")
             return
 
         # 4. Kirim UI Player
@@ -188,6 +192,16 @@ class Music(commands.Cog):
         view = MusicUI(self.bot, ctx)
         await loading_msg.delete() 
         await ctx.send(file=file, embed=embed, view=view)
+
+        # 5. [BARU] Sistem Otomatis Keluar (Auto-Disconnect)
+        # Menunggu sampai lagu benar-benar berhenti (habis, atau distop manual via tombol)
+        while vc.is_playing() or vc.is_paused():
+            await asyncio.sleep(1.0)
+
+        # Cek apakah bot masih terhubung dan sudah tidak ada lagu yang diputar
+        if vc and vc.is_connected() and not vc.is_playing() and not vc.is_paused():
+            await vc.disconnect()
+            self.music_sessions.pop(ctx.guild.id, None)
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):

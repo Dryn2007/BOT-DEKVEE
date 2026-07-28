@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from discord.ui import View, Button
 import os
-
+import asyncio
 # ==========================================
 # UI PANEL SOUNDBOARD (TEMPORARY)
 # ==========================================
@@ -60,6 +60,14 @@ class SoundboardPanel(View):
 
             source = discord.FFmpegPCMAudio(file_path)
             vc.play(source)
+
+            # 7. Tunggu sampai efek suara selesai diputar
+            while vc.is_playing():
+                await asyncio.sleep(0.5)
+                
+            # 8. Keluar dari Voice Channel jika tidak ada suara lain yang sedang diputar
+            if vc and vc.is_connected() and not vc.is_playing():
+                await vc.disconnect()
 
         except Exception as e:
             # JIKA GAGAL, ERRORNYA AKAN DIKIRIM LANGSUNG KE DISCORD!
