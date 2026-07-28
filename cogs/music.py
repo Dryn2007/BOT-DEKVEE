@@ -51,7 +51,7 @@ class Music(commands.Cog):
         self.music_sessions = {} 
 
         self.YDL_OPTIONS = {
-            'format': 'bestaudio/best', 
+            'format': 'ba/bestaudio/b/best', 
             'noplaylist': True, 
             'quiet': True,
             'default_search': 'auto',
