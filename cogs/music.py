@@ -50,12 +50,12 @@ class Music(commands.Cog):
         self.pool = pool
         self.music_sessions = {} 
 
+        # Mengembalikan settingan dasar yang aman dan tanpa cookies
         self.YDL_OPTIONS = {
-            'format': 'ba/bestaudio/b/best', 
+            'format': 'bestaudio/best', 
             'noplaylist': True, 
             'quiet': True,
-            'default_search': 'auto',
-            'cookiefile': 'cookies.txt'
+            'default_search': 'auto'
         }
         
         self.FFMPEG_OPTIONS = {
@@ -70,9 +70,9 @@ class Music(commands.Cog):
             return True
         return False
 
-    # === FUNGSI RAHASIA: PENERJEMAH LINK SPOTIFY / APPLE MUSIC ===
+    # === FUNGSI RAHASIA: PENERJEMAH LINK SPOTIFY / APPLE MUSIC / YOUTUBE ===
     async def convert_link(self, url):
-        # 1. Jika URL dari Spotify (Menggunakan OEmbed API Gratis)
+        # 1. Jika URL dari Spotify
         if "spotify.com" in url:
             try:
                 async with aiohttp.ClientSession() as session:
@@ -81,12 +81,11 @@ class Music(commands.Cog):
                             data = await resp.json()
                             title = data.get('title', '')
                             author = data.get('author_name', '')
-                            # Ubah menjadi keyword pencarian YouTube
                             return f"{title} {author} audio"
             except Exception as e:
                 print(f"Gagal translate Spotify: {e}")
 
-        # 2. Jika URL dari Apple Music (Membaca tag <title> web)
+        # 2. Jika URL dari Apple Music
         elif "apple.com" in url:
             try:
                 async with aiohttp.ClientSession() as session:
@@ -100,8 +99,20 @@ class Music(commands.Cog):
                                 return f"{title} audio"
             except Exception as e:
                 print(f"Gagal translate Apple Music: {e}")
+                
+        # 3. Jika URL dari YouTube (Diubah jadi teks agar aman dari blokir Heroku)
+        elif "youtube.com" in url or "youtu.be" in url:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"https://www.youtube.com/oembed?url={url}&format=json") as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            title = data.get('title', '')
+                            return f"{title} audio"
+            except Exception as e:
+                print(f"Gagal translate YouTube: {e}")
         
-        # Jika bukan link Spotify/Apple, kembalikan teks aslinya (Bisa link YT atau sekadar judul ketikan)
+        # Jika bukan link di atas, kembalikan teks aslinya
         return url
 
     @commands.command(name="music")
@@ -135,17 +146,16 @@ class Music(commands.Cog):
             'voice_channel': voice_channel.id
         }
 
-        # Pesan Loading sementara
         loading_msg = await ctx.send("⏳ Sedang memproses audio, mohon tunggu sebentar...")
 
         # --- EKSEKUSI PENERJEMAH LINK ---
-        if "spotify.com" in query or "apple.com" in query:
-            await loading_msg.edit(content="🔍 Membaca link musik Spotify/Apple...")
+        if "spotify.com" in query or "apple.com" in query or "youtube.com" in query or "youtu.be" in query:
+            await loading_msg.edit(content="🔍 Menerjemahkan link musik...")
             query = await self.convert_link(query)
 
-        # [BARU] Paksa yt-dlp melakukan pencarian jika teks bukan berupa link murni
+        # Paksa yt-dlp mencari di jalur alternatif (SoundCloud) agar bebas blokir Heroku
         if not query.startswith("http"):
-            query = f"ytsearch:{query}"
+            query = f"scsearch:{query}"
 
         # 2. Proses Pencarian dengan yt-dlp
         loop = asyncio.get_event_loop()
@@ -161,8 +171,13 @@ class Music(commands.Cog):
                 
         except Exception as e:
             print(f"Error yt-dlp: {e}")
-            # Tampilkan pesan error ke Discord agar mudah dicek
             await loading_msg.edit(content=f"❌ **Gagal memproses lagu.**\n```py\n{e}\n```")
+            
+            # Jika error mencari lagu, bot langsung keluar dari Voice Channel
+            if vc and vc.is_connected():
+                await vc.disconnect()
+                self.music_sessions.pop(ctx.guild.id, None)
+                
             await asyncio.sleep(10)
             await loading_msg.delete()
             return
@@ -177,6 +192,11 @@ class Music(commands.Cog):
         except Exception as e:
             print(f"Error FFmpeg: {e}")
             await loading_msg.edit(content=f"❌ **Terjadi kesalahan saat mencoba memutar audio:**\n```py\n{e}\n```")
+            
+            # Jika error memutar lagu (FFmpeg crash), bot langsung keluar dari Voice Channel
+            if vc and vc.is_connected():
+                await vc.disconnect()
+                self.music_sessions.pop(ctx.guild.id, None)
             return
 
         # 4. Kirim UI Player
@@ -195,12 +215,11 @@ class Music(commands.Cog):
         await loading_msg.delete() 
         await ctx.send(file=file, embed=embed, view=view)
 
-        # 5. [BARU] Sistem Otomatis Keluar (Auto-Disconnect)
-        # Menunggu sampai lagu benar-benar berhenti (habis, atau distop manual via tombol)
+        # 5. Sistem Otomatis Keluar (Auto-Disconnect) jika lagu habis
         while vc.is_playing() or vc.is_paused():
             await asyncio.sleep(1.0)
 
-        # Cek apakah bot masih terhubung dan sudah tidak ada lagu yang diputar
+        # Jika sudah tidak play dan tidak pause (artinya lagu habis/stop)
         if vc and vc.is_connected() and not vc.is_playing() and not vc.is_paused():
             await vc.disconnect()
             self.music_sessions.pop(ctx.guild.id, None)

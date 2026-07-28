@@ -3,14 +3,16 @@ from discord.ext import commands
 from discord.ui import View, Button
 import os
 import asyncio
+
 # ==========================================
 # UI PANEL SOUNDBOARD (TEMPORARY)
 # ==========================================
 class SoundboardPanel(View):
-    def __init__(self, cog):
+    def __init__(self, cog, author_id):
         # Set timeout menjadi 5 detik
         super().__init__(timeout=5.0)
         self.cog = cog
+        self.author_id = author_id  # [BARU] Menyimpan ID orang yang memanggil panel
         self.message = None # Tempat menyimpan object pesan untuk dihapus nanti
 
     # Fungsi yang akan otomatis berjalan jika 5 detik tidak ada interaksi
@@ -23,6 +25,11 @@ class SoundboardPanel(View):
 
     # Fungsi utama untuk memutar suara dan memotong koin
     async def play_sound(self, interaction: discord.Interaction, sound_name: str):
+        # 0. [BARU] Cek apakah yang mencet tombol adalah pemilik panel
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("❌ Hei! Kamu tidak bisa memencet panel milik orang lain. Ketik `!panelsb` sendiri ya!", ephemeral=True)
+            return
+
         # 1. Cek apakah user sedang berada di Voice Channel
         if not interaction.user.voice or not interaction.user.voice.channel:
             await interaction.response.send_message("❌ Masuk room voice dulu ya buat muter soundboard!", ephemeral=True)
@@ -43,16 +50,25 @@ class SoundboardPanel(View):
         # 4. Beri respon sukses secara private (ephemeral)
         await interaction.response.send_message(f"🔊 Memutar soundboard `{sound_name.upper()}` (-2 Koin)", ephemeral=True)
 
-        # 5. Masukkan bot ke Voice Channel (DENGAN PENJEBAK ERROR)
+        # 5. Masukkan bot ke Voice Channel (DENGAN PENJEBAK ERROR & DELAY)
         try:
             voice_channel = interaction.user.voice.channel
             vc = discord.utils.get(self.cog.bot.voice_clients, guild=interaction.guild)
             
+            just_joined = False # Penanda apakah bot baru saja join
+            
             if not vc:
                 # Tambahkan timeout agar bot tidak nge-hang jika jaringan Heroku lambat
                 vc = await voice_channel.connect(timeout=10.0)
+                just_joined = True
             elif vc.channel != voice_channel:
                 await vc.move_to(voice_channel)
+                just_joined = True
+
+            # Beri delay 1 detik KHUSUS saat bot baru pertama kali masuk
+            # Agar koneksi stabil dan suara awal tidak terpotong
+            if just_joined:
+                await asyncio.sleep(1.0)
 
             # 6. Hentikan suara sebelumnya (jika ada) lalu putar yang baru
             if vc.is_playing():
@@ -73,6 +89,7 @@ class SoundboardPanel(View):
             # JIKA GAGAL, ERRORNYA AKAN DIKIRIM LANGSUNG KE DISCORD!
             await interaction.followup.send(f"⚠️ **Sistem mendeteksi Error:**\n```py\n{e}\n```", ephemeral=True)
             print(f"ERROR SOUNDBOARD: {e}", flush=True)
+
     # --- DERETAN 8 TOMBOL SOUNDBOARD ---
     
     # Baris 1 (row=0)
@@ -150,8 +167,8 @@ class Soundboard(commands.Cog):
         )
         embed.set_footer(text="Panel interaktif oleh DekVee", icon_url=self.bot.user.display_avatar.url)
         
-        # Kirim panel dan simpan objek pesannya ke dalam View untuk dihapus saat timeout
-        view = SoundboardPanel(self)
+        # [BARU] Kirim panel dan sisipkan ID pemanggilnya
+        view = SoundboardPanel(self, ctx.author.id)
         msg = await ctx.send(embed=embed, view=view)
         view.message = msg
 
