@@ -65,8 +65,8 @@ class PrivateHelpDropdown(discord.ui.Select):
                 inline=False
             )
             embed.add_field(
-                name="`!sb <nama_efek>`", 
-                value="Memutar efek suara instan (Soundboard) ke dalam ruangan Voice Channel-mu.\n🪙 **Biaya:** 2 Koin (Setiap 1x pencet)", 
+                name="`!panelsb` (Panel Soundboard)", 
+                value="Memunculkan Panel Pop-up interaktif untuk memutar efek suara (Kaget, Ketawa, dll) secara instan ke dalam Voice Channel!\nPanel ini akan hilang otomatis jika didiamkan selama 5 detik agar chat tidak penuh.\n🪙 **Biaya:** 2 Koin (Setiap 1x klik tombol)", 
                 inline=False
             )
 
@@ -88,8 +88,8 @@ class PrivateHelpDropdown(discord.ui.Select):
             embed.add_field(name="`!clear`", value="**Akses:** Owner Bot\n**Fungsi:** Menghapus (purge) pesan di channel (default 5, max 100).", inline=False)
             embed.add_field(name="`!spawnstats`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memaksa dashboard statistik muncul ulang.", inline=False)
             embed.add_field(name="`!spawnhelp`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memunculkan ulang dashboard help secara paksa.", inline=False)
+            embed.add_field(name="`!synckoin`", value="**Akses:** Administrator\n**Fungsi:** Sinkronisasi manual untuk membagikan koin kompensasi berdasarkan akumulasi XP member lama.", inline=False)
             embed.add_field(name="`!testxp <jumlah>`", value="**Akses:** Administrator\n**Fungsi:** Mode testing untuk suntik XP ke akun sendiri secara instan.", inline=False)
-            embed.add_field(name="`!synckoin`", value="**Akses:** Administrator\n**Fungsi:** Sinkronisasi manual untuk membagikan koin kompensasi berdasarkan akumulasi XP dan Level member lama.", inline=False)
 
         self.placeholder = f"Sedang melihat: {val}"
         await interaction.response.edit_message(embed=embed, view=self.view)
@@ -100,10 +100,7 @@ class PrivateDoneButton(discord.ui.Button):
         super().__init__(label="Tutup & Selesai", style=discord.ButtonStyle.danger, emoji="✖️")
 
     async def callback(self, interaction: discord.Interaction):
-        # 1. Buka kembali gembok Grid di luar
         await self.view.main_view.unlock_grid(self.view.grid_index)
-        
-        # 2. Hapus menu private instan (tanpa pesan "Sesi selesai")
         try:
             await interaction.response.defer()
             await interaction.delete_original_response()
@@ -133,7 +130,6 @@ class MainDashboardView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
         self.cog = cog
-        
         self.grid_status = [None, None, None, None] 
         self.grid_tasks = [None, None, None, None]
 
@@ -151,7 +147,6 @@ class MainDashboardView(discord.ui.View):
         async def callback(interaction: discord.Interaction):
             user_id = interaction.user.id
 
-            # LOGIKA A: Grid Ini Sedang Dipakai
             if self.grid_status[index] is not None:
                 if self.grid_status[index] != user_id:
                     await interaction.response.send_message(
@@ -159,8 +154,6 @@ class MainDashboardView(discord.ui.View):
                         ephemeral=True
                     )
                     return
-            
-            # LOGIKA B: Grid Ini Kosong (Baru mau dipakai)
             else:
                 for i, status in enumerate(self.grid_status):
                     if status == user_id:
@@ -172,14 +165,11 @@ class MainDashboardView(discord.ui.View):
 
                 self.grid_status[index] = user_id
                 button = self.children[index]
-                
                 nama = interaction.user.display_name[:10]
                 button.label = f"🔒 Dipakai {nama}"
                 button.style = discord.ButtonStyle.secondary
-                
                 await interaction.response.edit_message(view=self)
 
-            # LOGIKA C: Kirim (atau kirim ulang) Menu Private
             private_view = PrivateHelpView(self, index)
             embed_intro = discord.Embed(
                 title=f"🚪 Masuk Grid {index+1}",
@@ -192,7 +182,6 @@ class MainDashboardView(discord.ui.View):
             else:
                 await interaction.followup.send(embed=embed_intro, view=private_view, ephemeral=True)
 
-            # LOGIKA D: Restart Timer
             if self.grid_tasks[index]:
                 self.grid_tasks[index].cancel()
             self.grid_tasks[index] = self.cog.bot.loop.create_task(self.timer_logic(index))
@@ -282,28 +271,21 @@ class HelpMenu(commands.Cog):
     async def on_message(self, message):
         if message.author.bot:
             return
-
         if message.content.startswith("!spawnhelp"):
             return
-
         if message.channel.id == self.ROOM_HELP_ID:
-            try:
-                await message.delete()
-            except Exception:
-                pass
+            try: await message.delete()
+            except Exception: pass
 
     # ====================================================================
     # 4. PENGHAPUS OTOMATIS COMMAND ADMIN (AUTO-SWEEP)
     # ====================================================================
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
-        # Abaikan error jika command typo/tidak ditemukan
         if isinstance(error, commands.CommandNotFound):
             return
             
-        # Jika error disebabkan karena user biasa (bukan admin) mencoba pakai command admin
         if isinstance(error, commands.CheckFailure):
-            # 1. Kirim pesan peringatan penolakan
             alert = discord.Embed(
                 title="⛔ AKSES DITOLAK!",
                 description=f"{ctx.author.mention}, kamu tidak memiliki izin untuk menggunakan command tersebut.",
@@ -311,21 +293,13 @@ class HelpMenu(commands.Cog):
             )
             warning_msg = await ctx.send(embed=alert)
             
-            # 2. Tunggu 5 detik agar user sempat membaca peringatan
             await asyncio.sleep(5.0)
             
-            # 3. Hapus pesan peringatan dari bot
-            try:
-                await warning_msg.delete()
-            except Exception:
-                pass
+            try: await warning_msg.delete()
+            except Exception: pass
                 
-            # 4. Hapus pesan command (ketikan asli) dari user
-            try:
-                await ctx.message.delete()
-            except Exception:
-                pass
-
+            try: await ctx.message.delete()
+            except Exception: pass
 
 async def setup(bot):
     await bot.add_cog(HelpMenu(bot))

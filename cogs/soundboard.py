@@ -4,13 +4,22 @@ from discord.ui import View, Button
 import os
 
 # ==========================================
-# UI PANEL SOUNDBOARD
+# UI PANEL SOUNDBOARD (TEMPORARY)
 # ==========================================
 class SoundboardPanel(View):
     def __init__(self, cog):
-        # timeout=None agar tombol awet selamanya
-        super().__init__(timeout=None)
+        # Set timeout menjadi 5 detik
+        super().__init__(timeout=5.0)
         self.cog = cog
+        self.message = None # Tempat menyimpan object pesan untuk dihapus nanti
+
+    # Fungsi yang akan otomatis berjalan jika 5 detik tidak ada interaksi
+    async def on_timeout(self):
+        if self.message:
+            try:
+                await self.message.delete()
+            except:
+                pass
 
     # Fungsi utama untuk memutar suara dan memotong koin
     async def play_sound(self, interaction: discord.Interaction, sound_name: str):
@@ -53,40 +62,40 @@ class SoundboardPanel(View):
         except Exception as e:
             print(f"Error memutar audio {sound_name}: {e}")
 
-    # --- DERETAN 8 TOMBOL SOUNDBOARD (SESUAI GAMBAR) ---
+    # --- DERETAN 8 TOMBOL SOUNDBOARD ---
     
     # Baris 1 (row=0)
-    @discord.ui.button(label="Kaget", emoji="🤯", style=discord.ButtonStyle.secondary, row=0, custom_id="sb_kaget")
+    @discord.ui.button(label="Kaget", emoji="🤯", style=discord.ButtonStyle.secondary, row=0)
     async def btn_1(self, interaction: discord.Interaction, button: Button):
         await self.play_sound(interaction, "kaget")
 
-    @discord.ui.button(label="Victory", emoji="🐦", style=discord.ButtonStyle.secondary, row=0, custom_id="sb_victory")
+    @discord.ui.button(label="Victory", emoji="🐦", style=discord.ButtonStyle.secondary, row=0)
     async def btn_2(self, interaction: discord.Interaction, button: Button):
         await self.play_sound(interaction, "victory")
 
-    @discord.ui.button(label="Siren", emoji="🚨", style=discord.ButtonStyle.secondary, row=0, custom_id="sb_siren")
+    @discord.ui.button(label="Siren", emoji="🚨", style=discord.ButtonStyle.secondary, row=0)
     async def btn_3(self, interaction: discord.Interaction, button: Button):
         await self.play_sound(interaction, "siren")
 
     # Baris 2 (row=1)
-    @discord.ui.button(label="FAHH", emoji="😆", style=discord.ButtonStyle.secondary, row=1, custom_id="sb_fahh")
+    @discord.ui.button(label="FAHH", emoji="😆", style=discord.ButtonStyle.secondary, row=1)
     async def btn_4(self, interaction: discord.Interaction, button: Button):
         await self.play_sound(interaction, "fahh")
 
-    @discord.ui.button(label="ketawa", emoji="🥰", style=discord.ButtonStyle.secondary, row=1, custom_id="sb_ketawa")
+    @discord.ui.button(label="ketawa", emoji="🥰", style=discord.ButtonStyle.secondary, row=1)
     async def btn_5(self, interaction: discord.Interaction, button: Button):
         await self.play_sound(interaction, "ketawa")
 
-    @discord.ui.button(label="WELKAM", emoji="👋", style=discord.ButtonStyle.secondary, row=1, custom_id="sb_welkam")
+    @discord.ui.button(label="WELKAM", emoji="👋", style=discord.ButtonStyle.secondary, row=1)
     async def btn_6(self, interaction: discord.Interaction, button: Button):
         await self.play_sound(interaction, "welkam")
 
     # Baris 3 (row=2)
-    @discord.ui.button(label="Pou", emoji="😜", style=discord.ButtonStyle.secondary, row=2, custom_id="sb_pou")
+    @discord.ui.button(label="Pou", emoji="😜", style=discord.ButtonStyle.secondary, row=2)
     async def btn_7(self, interaction: discord.Interaction, button: Button):
         await self.play_sound(interaction, "pou")
 
-    @discord.ui.button(label="IWAK TEMPE", emoji="🐡", style=discord.ButtonStyle.secondary, row=2, custom_id="sb_iwaktempe")
+    @discord.ui.button(label="IWAK TEMPE", emoji="🐡", style=discord.ButtonStyle.secondary, row=2)
     async def btn_8(self, interaction: discord.Interaction, button: Button):
         await self.play_sound(interaction, "iwak_tempe")
 
@@ -98,10 +107,6 @@ class Soundboard(commands.Cog):
     def __init__(self, bot, pool):
         self.bot = bot
         self.pool = pool
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        self.bot.add_view(SoundboardPanel(self))
 
     async def deduct_coins(self, user_id, amount):
         data = await self.pool.fetchrow("SELECT coins FROM levels WHERE user_id = $1", user_id)
@@ -115,9 +120,10 @@ class Soundboard(commands.Cog):
         return False
 
     @commands.command(name="panelsb")
-    @commands.has_permissions(administrator=True)
+    # HAS_PERMISSIONS DIHAPUS AGAR SEMUA MEMBER BISA MENGGUNAKANNYA
     async def spawn_sb_panel(self, ctx):
-        """Memunculkan Panel UI Soundboard (Hanya Admin)"""
+        """Memunculkan Panel UI Soundboard (Bisa untuk Semua Member)"""
+        # Hapus chat command (!panelsb) dari member secara instan
         try: await ctx.message.delete()
         except: pass
         
@@ -126,13 +132,17 @@ class Soundboard(commands.Cog):
             description=(
                 "Klik tombol di bawah untuk memutar efek suara ke dalam Voice Channel!\n\n"
                 "🪙 **Biaya:** `2 Koin` per klik\n"
+                "⏳ *Panel ini otomatis hilang jika tidak digunakan selama 5 detik.*\n"
                 "🗣️ **Syarat:** Kamu wajib berada di dalam Voice Channel terlebih dahulu."
             ),
             color=discord.Color.brand_green()
         )
         embed.set_footer(text="Panel interaktif oleh DekVee", icon_url=self.bot.user.display_avatar.url)
         
-        await ctx.send(embed=embed, view=SoundboardPanel(self))
+        # Kirim panel dan simpan objek pesannya ke dalam View untuk dihapus saat timeout
+        view = SoundboardPanel(self)
+        msg = await ctx.send(embed=embed, view=view)
+        view.message = msg
 
 async def setup(bot):
     await bot.add_cog(Soundboard(bot, bot.pool))

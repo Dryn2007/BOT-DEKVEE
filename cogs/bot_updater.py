@@ -34,6 +34,9 @@ class NewFeatureModal(Modal, title="Fitur Baru / Hapus Fitur"):
     )
 
     async def on_submit(self, interaction: discord.Interaction):
+        # PENTING: acknowledge interaction SEGERA (dalam <3 detik),
+        # sebelum melakukan hal lain yang lebih lambat (kirim embed ke channel lain).
+        await interaction.response.defer(ephemeral=True)
         await send_announcement_embed(
             interaction, self.bot, 
             update_type="new_or_remove", 
@@ -64,6 +67,7 @@ class UpdateFeatureModal(Modal, title="Update / Pembaruan 1 Fitur"):
     )
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         await send_announcement_embed(
             interaction, self.bot, 
             update_type="update", 
@@ -91,6 +95,7 @@ class MultiUpdateModal(Modal, title="Patch Notes (Multi Update)"):
     )
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         await send_announcement_embed(
             interaction, self.bot, 
             update_type="multi", 
@@ -124,10 +129,11 @@ class DashboardView(View):
     @discord.ui.button(label="⚠️ Toggle Maintenance", style=discord.ButtonStyle.danger, custom_id="persistent_btn_maintenance")
     async def btn_maintenance(self, interaction: discord.Interaction, button: Button):
         self.bot.maintenance_mode = not getattr(self.bot, 'maintenance_mode', False)
-        
+
         status_text = "Dinyalakan 🔴" if self.bot.maintenance_mode else "Dimatikan 🟢"
+        # Respons ke interaction duluan (sudah benar di kode asli), baru kirim ke channel lain.
         await interaction.response.send_message(f"✅ Pengumuman Maintenance **{status_text}** berhasil dikirim ke publik.", ephemeral=True)
-        
+
         channel = self.bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
         if channel:
             embed = discord.Embed(
@@ -142,7 +148,10 @@ class DashboardView(View):
                 timestamp=datetime.now()
             )
             embed.set_footer(text=f"Diupdate oleh {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
-            await channel.send(embed=embed)
+            try:
+                await channel.send(embed=embed)
+            except (discord.Forbidden, discord.HTTPException) as e:
+                await interaction.followup.send(f"⚠️ Gagal mengirim ke channel publik: {e}", ephemeral=True)
 
 
 # ==========================================
@@ -150,20 +159,22 @@ class DashboardView(View):
 # ==========================================
 
 async def send_announcement_embed(interaction, bot, update_type, nama, jenis=None, deskripsi=None, sebelum=None, sesudah=None):
+    # Catatan: interaction sudah di-defer() oleh caller (on_submit) sebelum fungsi ini
+    # dipanggil, jadi di sini kita SELALU pakai interaction.followup, bukan interaction.response.
     channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
     if not channel:
-        await interaction.response.send_message("❌ Error: Channel pengumuman publik tidak ditemukan!", ephemeral=True)
+        await interaction.followup.send("❌ Error: Channel pengumuman publik tidak ditemukan!", ephemeral=True)
         return
 
     tanggal_hari_ini = datetime.now().strftime("%d %B %Y")
-    
+
     # Menyesuaikan warna berdasarkan tipe update
     color_map = {
         "new_or_remove": discord.Color.brand_green(),
         "update": discord.Color.blue(),
         "multi": discord.Color.purple()
     }
-    
+
     embed = discord.Embed(
         title=f"🚀 UPDATE BOT TERBARU - {tanggal_hari_ini}",
         color=color_map.get(update_type, discord.Color.gold()),
@@ -176,23 +187,25 @@ async def send_announcement_embed(interaction, bot, update_type, nama, jenis=Non
         embed.add_field(name=f"{icon} Status Fitur", value=f"**{jenis.upper()}**", inline=False)
         embed.add_field(name="🛠️ Nama Fitur", value=f"> {nama}", inline=False)
         embed.add_field(name="📝 Deskripsi", value=f"```\n{deskripsi}\n```", inline=False)
-        
+
     elif update_type == "update":
         embed.description = f"Pembaruan dan optimasi sistem telah diterapkan!"
         embed.add_field(name="🔄 Nama Fitur", value=f"**{nama}**", inline=False)
         embed.add_field(name="❌ Sebelum", value=f"> {sebelum}", inline=False)
         embed.add_field(name="✅ Sesudah", value=f"> {sesudah}", inline=False)
-        
+
     # --- HANDLER BARU UNTUK MULTI UPDATE ---
     elif update_type == "multi":
         embed.description = f"Ada banyak peningkatan dan perbaikan (Patch Notes) yang baru saja diterapkan!\n\n**📌 {nama}**"
-        # Menampilkan deskripsi di dalam field agar rapi
         embed.add_field(name="Daftar Perubahan:", value=f"{deskripsi}", inline=False)
 
     embed.set_footer(text=f"Diupdate oleh {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
 
-    await channel.send(embed=embed)
-    await interaction.response.send_message("✅ Pengumuman berhasil dikirim ke channel publik!", ephemeral=True)
+    try:
+        await channel.send(embed=embed)
+        await interaction.followup.send("✅ Pengumuman berhasil dikirim ke channel publik!", ephemeral=True)
+    except (discord.Forbidden, discord.HTTPException) as e:
+        await interaction.followup.send(f"❌ Gagal mengirim pengumuman ke channel publik: {e}", ephemeral=True)
 
 
 # ==========================================
@@ -202,14 +215,14 @@ async def send_announcement_embed(interaction, bot, update_type, nama, jenis=Non
 class BotUpdater(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        
+
         if not hasattr(self.bot, 'maintenance_mode'):
             self.bot.maintenance_mode = False
 
     @commands.Cog.listener()
     async def on_ready(self):
         self.bot.add_view(DashboardView(self.bot))
-        
+
         channel = self.bot.get_channel(ADMIN_DASHBOARD_CHANNEL_ID)
         if not channel:
             print("Peringatan: Channel Dashboard Admin tidak ditemukan!")
@@ -235,7 +248,7 @@ class BotUpdater(commands.Cog):
         )
         if self.bot.user.display_avatar:
             embed.set_thumbnail(url=self.bot.user.display_avatar.url)
-        
+
         await channel.send(embed=embed, view=DashboardView(self.bot))
 
 
