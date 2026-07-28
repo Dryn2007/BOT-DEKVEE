@@ -77,36 +77,8 @@ class AutoGate(commands.Cog):
             ''')
             self.is_ready = True
             print("✅ Tabel Keamanan SKL (skl_registry) siap!")
-
-            # Catch-up: kalau bot sempat down/restart pas ada user join,
-            # on_member_join event mereka "hilang" (Discord tidak replay event
-            # yang lewat). Di sini kita cari member yang belum punya role
-            # MEMBER dan kirim ulang halt message-nya biar nggak ada yang
-            # kelewat cuma gara-gara bot lagi mati pas mereka join.
-            await self.catch_up_missed_joins()
-
-    async def catch_up_missed_joins(self):
-        pos_satpam = self.bot.get_channel(self.pos_satpam_id)
-        if pos_satpam is None:
-            try:
-                pos_satpam = await self.bot.fetch_channel(self.pos_satpam_id)
-            except Exception as e:
-                print(f"❌ Catch-up gagal, tidak bisa fetch pos_satpam: {e}")
-                return
-
-        guild = pos_satpam.guild
-        role_member = discord.utils.get(guild.roles, name="MEMBER")
-
-        for member in guild.members:
-            if member.bot:
-                continue
-            if role_member and role_member in member.roles:
-                continue  # sudah lolos verifikasi, skip
-            try:
-                await self.send_halt_message(pos_satpam, member, is_retry=False)
-                await asyncio.sleep(1)  # jaga-jaga kalau banyak member sekaligus
-            except Exception as e:
-                print(f"❌ Gagal catch-up halt message ke {member}: {e}")
+            
+            # FITUR CATCH UP DIHAPUS DARI SINI AGAR TIDAK SPAM SAAT RESTART
 
     async def panggil_gemini_api(self, prompt, image_data, mime_type):
         if not gemini_key:
@@ -176,13 +148,10 @@ class AutoGate(commands.Cog):
         )
         embed.set_image(url="attachment://tutorial_upload.png")
 
-        # Pastikan path gambar valid sebelum bikin discord.File, biar kalau
-        # gagal errornya jelas ("gambar tutorial tidak ketemu") bukan cuma
-        # FileNotFoundError generik yang bikin seluruh fungsi ini gagal diam-diam.
+        # Pastikan path gambar valid sebelum bikin discord.File
         asset_path = "assets/tutorial_upload.png"
         if not os.path.isfile(asset_path):
-            print(f"❌ Asset '{asset_path}' tidak ditemukan (cwd: {os.getcwd()}). "
-                  f"Halt message dikirim tanpa gambar tutorial.")
+            print(f"❌ Asset '{asset_path}' tidak ditemukan. Halt message dikirim tanpa gambar tutorial.")
             await channel.send(
                 content=(
                     f"🚨 **HALT!** {sapaan}, {member.mention}!\n\n"
@@ -217,8 +186,6 @@ class AutoGate(commands.Cog):
 
         pos_satpam = self.bot.get_channel(self.pos_satpam_id)
         if pos_satpam is None:
-            # Cache belum ke-load (misal bot baru banget nyala), coba fetch
-            # langsung ke API biar nggak silently skip.
             try:
                 pos_satpam = await self.bot.fetch_channel(self.pos_satpam_id)
             except Exception as e:
@@ -265,7 +232,7 @@ class AutoGate(commands.Cog):
                 await peringatan.delete(delay=5)
             return
 
-        # Sapu bersih pesan bot sebelumnya (Pesan Halt sebelumnya dihapus)
+        # Sapu bersih pesan bot sebelumnya
         async for msg in message.channel.history(limit=50):
             if msg.author == self.bot.user and message.author.mention in msg.content:
                 try: await msg.delete()

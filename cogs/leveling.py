@@ -253,5 +253,52 @@ class Leveling(commands.Cog):
             msg += f"{i}. **{name}** - Level {row['level']} ({row['xp']} XP)\n"
         await ctx.send(msg)
 
+    @commands.command()
+    @commands.has_permissions(administrator=True)
+    async def synckoin(self, ctx):
+        msg = await ctx.send("⏳ Memulai sinkronisasi koin untuk akumulasi XP dan Level lama...")
+        
+        # Ambil semua data user dari tabel levels
+        records = await self.pool.fetch("SELECT user_id, xp, level, coins FROM levels")
+        updated_count = 0
+        total_koin_dibagikan = 0
+        
+        for row in records:
+            user_id = row['user_id']
+            xp = row['xp'] if row['xp'] else 0
+            level = row['level'] if row['level'] else 1
+            current_coins = row['coins'] if row['coins'] else 0
+            
+            # 1. Hitung Koin dari akumulasi XP (1 koin tiap 50 XP)
+            koin_xp = xp // 50
+            
+            # 2. Hitung Koin dari Naik Level (5 koin tiap naik level, level 1 tidak dihitung)
+            koin_lvl = (level - 1) * 5 if level > 1 else 0
+            
+            # 3. Hitung Koin dari Naik Rank/Role (10 koin tiap batas rank)
+            rank_thresholds = [5, 10, 20, 35, 50, 75, 100]
+            koin_rank = sum(10 for t in rank_thresholds if level >= t)
+            
+            # Total hak koin mereka
+            total_koin_hak = koin_xp + koin_lvl + koin_rank
+            
+            # Update database jika mereka punya hak koin yang belum diberikan
+            if total_koin_hak > current_coins:
+                selisih_koin = total_koin_hak - current_coins
+                
+                # Update koin di tabel levels
+                await self.pool.execute("UPDATE levels SET coins = $1 WHERE user_id = $2", total_koin_hak, user_id)
+                
+                # Catat ke riwayat agar muncul di !koinku
+                await self.pool.execute(
+                    "INSERT INTO coin_logs (user_id, amount, description) VALUES ($1, $2, $3)", 
+                    user_id, selisih_koin, "Kompensasi Akumulasi XP & Level Lama"
+                )
+                
+                updated_count += 1
+                total_koin_dibagikan += selisih_koin
+                
+        await msg.edit(content=f"✅ **Sinkronisasi Berhasil!**\nMembagikan total **{total_koin_dibagikan} Koin** kepada **{updated_count} member** berdasarkan XP lama mereka.")
+
 async def setup(bot):
     await bot.add_cog(Leveling(bot, bot.pool))
