@@ -34,8 +34,6 @@ class NewFeatureModal(Modal, title="Fitur Baru / Hapus Fitur"):
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        # PENTING: acknowledge interaction SEGERA (dalam <3 detik),
-        # sebelum melakukan hal lain yang lebih lambat (kirim embed ke channel lain).
         await interaction.response.defer(ephemeral=True)
         await send_announcement_embed(
             interaction, self.bot, 
@@ -121,7 +119,6 @@ class DashboardView(View):
     async def btn_update_feature(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(UpdateFeatureModal(self.bot))
 
-    # --- TOMBOL BARU UNTUK MULTI UPDATE ---
     @discord.ui.button(label="📑 Patch Notes (Multi)", style=discord.ButtonStyle.secondary, custom_id="persistent_btn_multi")
     async def btn_multi_update(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(MultiUpdateModal(self.bot))
@@ -131,7 +128,6 @@ class DashboardView(View):
         self.bot.maintenance_mode = not getattr(self.bot, 'maintenance_mode', False)
 
         status_text = "Dinyalakan 🔴" if self.bot.maintenance_mode else "Dimatikan 🟢"
-        # Respons ke interaction duluan (sudah benar di kode asli), baru kirim ke channel lain.
         await interaction.response.send_message(f"✅ Pengumuman Maintenance **{status_text}** berhasil dikirim ke publik.", ephemeral=True)
 
         channel = self.bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
@@ -159,8 +155,6 @@ class DashboardView(View):
 # ==========================================
 
 async def send_announcement_embed(interaction, bot, update_type, nama, jenis=None, deskripsi=None, sebelum=None, sesudah=None):
-    # Catatan: interaction sudah di-defer() oleh caller (on_submit) sebelum fungsi ini
-    # dipanggil, jadi di sini kita SELALU pakai interaction.followup, bukan interaction.response.
     channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
     if not channel:
         await interaction.followup.send("❌ Error: Channel pengumuman publik tidak ditemukan!", ephemeral=True)
@@ -168,7 +162,6 @@ async def send_announcement_embed(interaction, bot, update_type, nama, jenis=Non
 
     tanggal_hari_ini = datetime.now().strftime("%d %B %Y")
 
-    # Menyesuaikan warna berdasarkan tipe update
     color_map = {
         "new_or_remove": discord.Color.brand_green(),
         "update": discord.Color.blue(),
@@ -183,21 +176,21 @@ async def send_announcement_embed(interaction, bot, update_type, nama, jenis=Non
 
     if update_type == "new_or_remove":
         icon = "✨" if "baru" in str(jenis).lower() else "🗑️"
-        embed.description = f"Ada pembaruan sistem bot terbaru dari tim Developer!"
+        # Memindahkan deskripsi ke area yang muat 4096 karakter agar tidak error
+        embed.description = f"Ada pembaruan sistem bot terbaru dari tim Developer!\n\n**📝 Deskripsi:**\n```\n{deskripsi}\n```"
         embed.add_field(name=f"{icon} Status Fitur", value=f"**{jenis.upper()}**", inline=False)
         embed.add_field(name="🛠️ Nama Fitur", value=f"> {nama}", inline=False)
-        embed.add_field(name="📝 Deskripsi", value=f"```\n{deskripsi}\n```", inline=False)
 
     elif update_type == "update":
         embed.description = f"Pembaruan dan optimasi sistem telah diterapkan!"
         embed.add_field(name="🔄 Nama Fitur", value=f"**{nama}**", inline=False)
-        embed.add_field(name="❌ Sebelum", value=f"> {sebelum}", inline=False)
-        embed.add_field(name="✅ Sesudah", value=f"> {sesudah}", inline=False)
+        # Mengamankan batas field 1024 karakter
+        embed.add_field(name="❌ Sebelum", value=f"> {sebelum}"[:1020], inline=False)
+        embed.add_field(name="✅ Sesudah", value=f"> {sesudah}"[:1020], inline=False)
 
-    # --- HANDLER BARU UNTUK MULTI UPDATE ---
     elif update_type == "multi":
-        embed.description = f"Ada banyak peningkatan dan perbaikan (Patch Notes) yang baru saja diterapkan!\n\n**📌 {nama}**"
-        embed.add_field(name="Daftar Perubahan:", value=f"{deskripsi}", inline=False)
+        # Menggunakan embed.description untuk Patch Notes agar teks di atas 1024 karakter tetap lolos
+        embed.description = f"Ada banyak peningkatan dan perbaikan (Patch Notes) yang baru saja diterapkan!\n\n**📌 {nama}**\n\n**Daftar Perubahan:**\n{deskripsi}"
 
     embed.set_footer(text=f"Diupdate oleh {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
 

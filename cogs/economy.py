@@ -61,12 +61,16 @@ class Economy(commands.Cog):
             description=f"Halo {ctx.author.mention}, kamu saat ini memiliki **{current_coins} Koin**.",
             color=discord.Color.gold()
         )
-        embed.set_thumbnail(url="https://link-foto-koin-png-kamu.png") # Ganti link koin
+        
+        # --- PERUBAHAN DI SINI ---
+        file = discord.File("assets/coin.png", filename="coin.png")
+        embed.set_thumbnail(url="attachment://coin.png") 
+        # -------------------------
         
         view = CoinHistoryUI(self.bot, ctx.author.id)
         
-        # Pesan bot akan hilang dalam 5 detik
-        await ctx.send(embed=embed, view=view, delete_after=5.0)
+        # Pesan bot akan hilang dalam 5 detik. Jangan lupa file=file
+        await ctx.send(file=file, embed=embed, view=view, delete_after=5.0)
 
 async def setup(bot):
     await bot.add_cog(Economy(bot, bot.pool))

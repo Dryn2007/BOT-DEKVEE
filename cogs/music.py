@@ -74,12 +74,17 @@ class Music(commands.Cog):
             description=f"Memutar musik dari link: {url}",
             color=discord.Color.blurple()
         )
-        embed.set_thumbnail(url="https://link-ke-foto-koin-atau-cover-musik.png") # Bisa diganti dengan cover album dari yt-dlp
+        
+        # --- PERUBAHAN DI SINI ---
+        file = discord.File("assets/coin.png", filename="coin.png")
+        embed.set_thumbnail(url="attachment://coin.png") 
+        # -------------------------
+        
         embed.set_footer(text=f"Requested by {ctx.author.name} | Sisa Koin terpotong {cost}", icon_url=ctx.author.display_avatar.url)
 
-        # Muncul di channel tempat command diketik
+        # Muncul di channel tempat command diketik. Jangan lupa file=file
         view = MusicUI(self.bot, ctx)
-        await ctx.send(embed=embed, view=view)
+        await ctx.send(file=file, embed=embed, view=view)
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
