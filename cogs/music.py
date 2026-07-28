@@ -54,7 +54,8 @@ class Music(commands.Cog):
             'format': 'bestaudio/best', 
             'noplaylist': True, 
             'quiet': True,
-            'default_search': 'auto'
+            'default_search': 'auto',
+            'cookiefile': 'cookies.txt'
         }
         self.FFMPEG_OPTIONS = {
             'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 
