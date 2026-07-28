@@ -42,6 +42,7 @@ class NewFeatureModal(Modal, title="Fitur Baru / Hapus Fitur"):
             deskripsi=self.deskripsi_fitur.value
         )
 
+
 class UpdateFeatureModal(Modal, title="Update / Pembaruan Fitur"):
     def __init__(self, bot):
         super().__init__()
@@ -71,17 +72,16 @@ class UpdateFeatureModal(Modal, title="Update / Pembaruan Fitur"):
             sesudah=self.kondisi_sesudah.value
         )
 
+
 # ==========================================
 # UI VIEW (Dashboard Buttons Persisten)
 # ==========================================
 
 class DashboardView(View):
     def __init__(self, bot):
-        # timeout=None SANGAT PENTING agar tombol tidak pernah mati
         super().__init__(timeout=None)
         self.bot = bot
 
-    # custom_id ditambahkan agar Discord ingat tombol ini milik siapa setelah bot restart
     @discord.ui.button(label="✨ Fitur Baru / Hapus", style=discord.ButtonStyle.success, custom_id="persistent_btn_new")
     async def btn_new_feature(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(NewFeatureModal(self.bot))
@@ -89,6 +89,33 @@ class DashboardView(View):
     @discord.ui.button(label="🔄 Update Fitur", style=discord.ButtonStyle.primary, custom_id="persistent_btn_update")
     async def btn_update_feature(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(UpdateFeatureModal(self.bot))
+
+    # --- TOMBOL MAINTENANCE HANYA UNTUK PENGUMUMAN ---
+    @discord.ui.button(label="⚠️ Toggle Maintenance", style=discord.ButtonStyle.danger, custom_id="persistent_btn_maintenance")
+    async def btn_maintenance(self, interaction: discord.Interaction, button: Button):
+        # Membalikkan status untuk mengubah teks pengumuman
+        self.bot.maintenance_mode = not getattr(self.bot, 'maintenance_mode', False)
+        
+        status_text = "Dinyalakan 🔴" if self.bot.maintenance_mode else "Dimatikan 🟢"
+        await interaction.response.send_message(f"✅ Pengumuman Maintenance **{status_text}** berhasil dikirim ke publik.", ephemeral=True)
+        
+        # Otomatis kirim pengumuman ke publik
+        channel = self.bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+        if channel:
+            embed = discord.Embed(
+                title="⚠️ PENGUMUMAN SISTEM",
+                description=(
+                    "Bot sedang dalam masa perbaikan (Maintenance) oleh tim Developer. "
+                    "Sebagian fitur mungkin sedang disesuaikan dan berjalan kurang stabil." 
+                    if self.bot.maintenance_mode else 
+                    "✅ Maintenance selesai! Semua sistem bot sudah kembali normal."
+                ),
+                color=discord.Color.red() if self.bot.maintenance_mode else discord.Color.green(),
+                timestamp=datetime.now()
+            )
+            embed.set_footer(text=f"Diupdate oleh {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
+            await channel.send(embed=embed)
+
 
 # ==========================================
 # FUNGSI PENGIRIM PENGUMUMAN
@@ -126,40 +153,42 @@ async def send_announcement_embed(interaction, bot, update_type, nama, jenis=Non
     await channel.send(embed=embed)
     await interaction.response.send_message("✅ Pengumuman berhasil dikirim ke channel publik!", ephemeral=True)
 
+
 # ==========================================
-# COG CLASS DENGAN SISTEM AUTO-DEPLOY
+# COG CLASS
 # ==========================================
 
 class BotUpdater(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        
+        # Variabel sebagai penanda (flag) untuk toggle teks pengumuman
+        if not hasattr(self.bot, 'maintenance_mode'):
+            self.bot.maintenance_mode = False
 
     @commands.Cog.listener()
     async def on_ready(self):
-        # 1. Daftarkan view agar tombol persisten aktif
         self.bot.add_view(DashboardView(self.bot))
         
-        # 2. Cari channel khusus Admin untuk dashboard
         channel = self.bot.get_channel(ADMIN_DASHBOARD_CHANNEL_ID)
         if not channel:
             print("Peringatan: Channel Dashboard Admin tidak ditemukan!")
             return
 
-        # 3. Bersihkan pesan sebelumnya di room itu (biar tidak numpuk saat bot restart)
         try:
             await channel.purge(limit=10)
         except discord.Forbidden:
             print("Peringatan: Bot tidak punya permission 'Manage Messages' di channel admin.")
             return
 
-        # 4. Kirim ulang dashboard interaktifnya
         embed = discord.Embed(
             title="⚙️ Dashboard Pengumuman Bot",
             description=(
                 "Silakan pilih jenis pengumuman yang ingin dikirimkan ke publik.\n\n"
                 "**Panduan:**\n"
                 "`✨ Fitur Baru / Hapus` : Gunakan jika ada sistem yang baru ditambahkan atau dihapus.\n"
-                "`🔄 Update Fitur` : Gunakan jika ada perubahan sistem (Perbandingan Sebelum & Sesudah)."
+                "`🔄 Update Fitur` : Gunakan jika ada perubahan sistem.\n"
+                "`⚠️ Toggle Maintenance` : Kirim pengumuman bahwa bot sedang/selesai maintenance."
             ),
             color=discord.Color.dark_grey()
         )
@@ -167,6 +196,7 @@ class BotUpdater(commands.Cog):
             embed.set_thumbnail(url=self.bot.user.display_avatar.url)
         
         await channel.send(embed=embed, view=DashboardView(self.bot))
+
 
 async def setup(bot):
     await bot.add_cog(BotUpdater(bot))
