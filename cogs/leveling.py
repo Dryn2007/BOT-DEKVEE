@@ -12,9 +12,9 @@ class Leveling(commands.Cog):
         self.pool = pool
         self.cooldowns = {}
         
-        # --- TAMBAHAN UNTUK LIMIT HARIAN & VOICE ---
+        # --- TRACKER UNTUK LIMIT HARIAN, VOICE, & KOIN ---
         self.voice_sessions = {}  # Melacak waktu join voice
-        self.daily_tracker = {}   # Melacak jumlah XP harian user
+        self.daily_tracker = {}   # Melacak jumlah XP harian & chat koin
         self.current_day = datetime.now().date()
 
     # Fungsi untuk mereset limit setiap berganti hari
@@ -28,7 +28,8 @@ class Leveling(commands.Cog):
     def get_user_daily(self, user_id):
         self.check_daily_reset()
         if user_id not in self.daily_tracker:
-            self.daily_tracker[user_id] = {'chat': 0, 'call': 0}
+            # chat_count untuk melacak kelipatan 5 chat = 1 koin. coin_earned untuk batas 10 koin
+            self.daily_tracker[user_id] = {'chat': 0, 'call': 0, 'chat_count': 0, 'coin_earned': 0}
         return self.daily_tracker[user_id]
 
     def get_rank_role(self, level):
@@ -40,6 +41,16 @@ class Leveling(commands.Cog):
         if level >= 10: return "C-Rank Hunter"
         if level >= 5: return "D-Rank Hunter"
         return "E-Rank Hunter"
+
+    # Fungsi penambah koin + pencatat riwayat (Log)
+    async def add_coins(self, user_id, amount, description="Sistem Leveling"):
+        # Tambah saldo koin di tabel levels
+        await self.pool.execute("UPDATE levels SET coins = coins + $1 WHERE user_id = $2", amount, user_id)
+        # Catat ke riwayat agar muncul di command !koinku
+        await self.pool.execute(
+            "INSERT INTO coin_logs (user_id, amount, description) VALUES ($1, $2, $3)", 
+            user_id, amount, description
+        )
 
     async def update_role(self, member, level):
         role_name = self.get_rank_role(level)
@@ -55,16 +66,21 @@ class Leveling(commands.Cog):
         
         if target_role not in member.roles:
             await member.add_roles(target_role)
+            # REWARD: Naik Role/Rank dapat 10 Koin
+            await self.add_coins(member.id, 10, "Naik Rank/Role")
 
     async def send_levelup_announcement(self, member, level, is_rank_up=False):
         channel = self.bot.get_channel(1526479863811149954)
         if channel:
             if is_rank_up:
                 title_text = "🎉 Rank Up!"
-                desc_text = f"Luar biasa {member.mention}! Kamu telah mencapai **Level {level}** dan berevolusi menjadi **{self.get_rank_role(level)}**!"
+                desc_text = (f"Luar biasa {member.mention}! Kamu telah mencapai **Level {level}** dan "
+                             f"berevolusi menjadi **{self.get_rank_role(level)}**!\n"
+                             f"🪙 **Reward:** +10 Koin (Total Level & Rank Up)")
             else:
                 title_text = "🏆 Level Up!"
-                desc_text = f"Selamat {member.mention}! Kamu naik ke **Level {level}**!"
+                desc_text = (f"Selamat {member.mention}! Kamu naik ke **Level {level}**!\n"
+                             f"🪙 **Reward:** +5 Koin")
 
             embed = discord.Embed(
                 title=title_text,
@@ -75,16 +91,26 @@ class Leveling(commands.Cog):
             await channel.send(embed=embed)
 
     async def give_xp(self, user_id, amount, member=None):
-        old_data = await self.pool.fetchrow("SELECT level FROM levels WHERE user_id = $1", user_id)
+        old_data = await self.pool.fetchrow("SELECT level, xp FROM levels WHERE user_id = $1", user_id)
         old_level = old_data['level'] if old_data else 1
+        old_xp = old_data['xp'] if old_data else 0
         
         result = await self.pool.fetchrow("SELECT * FROM add_xp($1, $2)", user_id, amount)
         new_level = result['new_level']
+        new_xp = old_xp + amount 
+
+        # REWARD: Setiap kelipatan 50 XP dapat 1 koin (terakumulasi permanen)
+        coins_to_add = (new_xp // 50) - (old_xp // 50)
+        if coins_to_add > 0:
+            await self.add_coins(user_id, coins_to_add, "Mencapai Kelipatan 50 XP")
         
         if member:
             await self.update_role(member, new_level)
             
             if new_level > old_level:
+                # REWARD: Naik level dapat 5 Koin
+                await self.add_coins(user_id, 5, f"Naik ke Level {new_level}")
+                
                 old_rank = self.get_rank_role(old_level)
                 new_rank = self.get_rank_role(new_level)
                 is_rank_up = old_rank != new_rank
@@ -93,15 +119,15 @@ class Leveling(commands.Cog):
                 
                 try:
                     if is_rank_up:
-                        await member.send(f"Selamat! Kamu naik ke Level {new_level} dan Rank kamu naik menjadi **{new_rank}**!")
+                        await member.send(f"Selamat! Kamu naik ke Level {new_level} dan Rank kamu naik menjadi **{new_rank}**!\n🪙 Kamu juga mendapatkan total **15 Koin** (Level + Rank)!")
                     else:
-                        await member.send(f"Selamat! Kamu naik ke **Level {new_level}**!")
+                        await member.send(f"Selamat! Kamu naik ke **Level {new_level}**!\n🪙 Kamu juga mendapatkan **5 Koin**!")
                 except: 
                     pass
         
         return new_level
 
-    # --- EVENT: CHAT XP (MAX 30/HARI) ---
+    # --- EVENT: CHAT XP (MAX 30/HARI) & CHAT KOIN ---
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or not message.guild: return
@@ -111,14 +137,18 @@ class Leveling(commands.Cog):
         
         daily = self.get_user_daily(message.author.id)
         
-        # Cek apakah limit chat harian belum menyentuh 30 XP
+        # SISTEM KOIN: 5 Chat = 1 Koin (Max 10 per hari)
+        daily['chat_count'] += 1
+        if daily['chat_count'] >= 5 and daily['coin_earned'] < 10:
+            await self.add_coins(message.author.id, 1, "Bonus 5 Chat Harian")
+            daily['chat_count'] = 0
+            daily['coin_earned'] += 1
+
+        # SISTEM XP CHAT
         if daily['chat'] < 30:
-            xp_to_give = 2
-            
             # Jika XP yang mau diberikan membuat totalnya lebih dari 30, potong sisanya
-            if daily['chat'] + xp_to_give > 30:
-                xp_to_give = 30 - daily['chat']
-                
+            xp_to_give = min(2, 30 - daily['chat'])
+            
             self.cooldowns[message.author.id] = datetime.now()
             daily['chat'] += xp_to_give
             await self.give_xp(message.author.id, xp_to_give, message.author)
@@ -154,7 +184,6 @@ class Leveling(commands.Cog):
                         daily['call'] += xp_to_give
                         await self.give_xp(member.id, xp_to_give, member)
 
-    # (Command testxp, rank, dan leaderboard tetap sama seperti aslinya)
     @commands.command()
     @commands.has_permissions(administrator=True)
     async def testxp(self, ctx, amount: int):

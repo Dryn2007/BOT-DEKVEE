@@ -2,7 +2,6 @@ import discord
 from discord.ext import commands, tasks
 from datetime import datetime, timedelta, timezone
 
-# ID Channel Statistik
 STATS_CHANNEL_ID = 1526614764799922236 
 WIB = timezone(timedelta(hours=7))
 
@@ -33,26 +32,28 @@ class Dashboard(commands.Cog):
             role = discord.utils.get(guild.roles, name=role_name)
             member_counts[role_name] = len([m for m in role.members if not m.bot]) if role else 0
 
-        # 2. Ambil Data Level & XP dari Database
-        records = await self.bot.pool.fetch("SELECT user_id, level, xp FROM levels ORDER BY xp DESC LIMIT 200")
-        top_global = []
-        top_prodi = {r: [] for r in prodi_roles}
-
+        # 2. Ambil Semua Data Level, XP, & Koin dari Database
+        # Pastikan kolom 'coins' sudah ada di tabel levels
+        records = await self.bot.pool.fetch("SELECT user_id, level, xp, COALESCE(coins, 0) as coins FROM levels")
+        
+        # Filter member yang valid di server
+        valid_members = []
         for row in records:
             member = guild.get_member(row['user_id'])
-            if not member or member.bot: continue
+            if member and not member.bot:
+                valid_members.append({'member': member, 'level': row['level'], 'xp': row['xp'], 'coins': row['coins']})
 
-            if len(top_global) < 5:
-                top_global.append((member, row['level'], row['xp']))
+        # 3. Sorting Data (XP dan Koin)
+        sorted_by_xp = sorted(valid_members, key=lambda x: x['xp'], reverse=True)
+        sorted_by_coins = sorted(valid_members, key=lambda x: x['coins'], reverse=True)
 
-            for role_name in prodi_roles:
-                role = discord.utils.get(guild.roles, name=role_name)
-                if role and role in member.roles:
-                    if len(top_prodi[role_name]) < 3:
-                        top_prodi[role_name].append((member, row['level'], row['xp']))
+        # Fungsi bantuan untuk filter prodi
+        def get_top_prodi(sorted_data, role_name, limit=3):
+            role = discord.utils.get(guild.roles, name=role_name)
+            if not role: return []
+            return [data for data in sorted_data if role in data['member'].roles][:limit]
 
-        # 3. Ambil Data Streak Api dari Database
-        # Menggunakan try-except berjaga-jaga jika tabel belum dibuat oleh streak.py
+        # 4. Ambil Data Streak Api
         try:
             streak_records = await self.bot.pool.fetch('SELECT prodi_name, current_streak, last_active_date FROM prodi_streaks')
             streaks = {r['prodi_name']: r for r in streak_records}
@@ -62,51 +63,53 @@ class Dashboard(commands.Cog):
         today = datetime.now(WIB).date()
         yesterday = today - timedelta(days=1)
 
-        # 4. Bangun UI Dashboard
+        # 5. Bangun UI Dashboard
         embed = discord.Embed(
             title="📊 DASHBOARD STATISTIK KAMPUS",
             description="*Data di bawah ini diperbarui secara otomatis setiap 1 menit.*",
             color=discord.Color.dark_teal()
         )
 
-        # Panel Populasi
+        # Panel Populasi & Streak
         count_text = ""
-        for role_name in prodi_roles:
-            count_text += f"**{role_name}:** {member_counts[role_name]} Mahasiswa\n"
-        embed.add_field(name="👥 POPULASI MAHASISWA", value=count_text, inline=True)
-
-        # Panel Streak Api
         streak_text = ""
         for role_name in prodi_roles:
+            count_text += f"**{role_name}:** {member_counts[role_name]} Mhs\n"
             s_data = streaks.get(role_name)
-            display_streak = 0
-            if s_data:
-                # Jika hari ini atau kemarin masih aktif, streak ditampilkan. Jika tidak, artinya 0
-                if s_data['last_active_date'] >= yesterday:
-                    display_streak = s_data['current_streak']
+            display_streak = s_data['current_streak'] if s_data and s_data['last_active_date'] >= yesterday else 0
             streak_text += f"**{role_name}:** {display_streak} 🔥\n"
-        embed.add_field(name="🔥 STREAK API HARIAN", value=streak_text, inline=True)
+            
+        embed.add_field(name="👥 POPULASI", value=count_text, inline=True)
+        embed.add_field(name="🔥 STREAK API", value=streak_text, inline=True)
+        embed.add_field(name="\u200b", value="\u200b", inline=False) # Spacing
 
-        embed.add_field(name="\u200b", value="\u200b", inline=False) # Spacing Kosong
+        # ================= PANEL XP =================
+        global_xp_text = ""
+        for i, data in enumerate(sorted_by_xp[:10], 1): # TOP 10 GLOBAL XP
+            global_xp_text += f"**#{i}** {data['member'].mention} - LVL {data['level']} *( {data['xp']} XP )*\n"
+        embed.add_field(name="🏆 TOP 10 HUNTER GLOBAL (XP)", value=global_xp_text or "Belum ada data.", inline=False)
 
-        # Panel Top Global
-        global_text = ""
-        for i, (mem, lvl, xp) in enumerate(top_global, 1):
-            global_text += f"**#{i}** {mem.mention} - LVL {lvl} *( {xp} XP )*\n"
-        if not global_text: global_text = "Belum ada data Hunter."
-        embed.add_field(name="🏆 TOP 5 HUNTER GLOBAL", value=global_text, inline=False)
-
-        # Panel Top Prodi
         for role_name in prodi_roles:
-            prodi_text = ""
-            for i, (mem, lvl, xp) in enumerate(top_prodi[role_name], 1):
-                prodi_text += f"**#{i}** {mem.display_name} - LVL {lvl}\n"
-            if not prodi_text: prodi_text = "-"
-            embed.add_field(name=f"🏅 TOP 3 {role_name}", value=prodi_text, inline=True)
+            prodi_xp_data = get_top_prodi(sorted_by_xp, role_name, limit=3)
+            prodi_text = "".join([f"**#{i}** {d['member'].display_name} - LVL {d['level']}\n" for i, d in enumerate(prodi_xp_data, 1)])
+            embed.add_field(name=f"🏅 TOP 3 {role_name} (XP)", value=prodi_text or "-", inline=True)
 
-        embed.set_footer(text="Telkom University Jakarta Auto-Sync", icon_url=guild.icon.url if guild.icon else None)
+        embed.add_field(name="\u200b", value="\u200b", inline=False) # Spacing
 
-        # 5. Kirim ke Discord
+        # ================= PANEL KOIN =================
+        global_coin_text = ""
+        for i, data in enumerate(sorted_by_coins[:10], 1): # TOP 10 GLOBAL KOIN
+            global_coin_text += f"**#{i}** {data['member'].mention} - 🪙 **{data['coins']} Koin**\n"
+        embed.add_field(name="💰 TOP 10 SULTAN GLOBAL (KOIN)", value=global_coin_text or "Belum ada data.", inline=False)
+
+        for role_name in prodi_roles:
+            prodi_coin_data = get_top_prodi(sorted_by_coins, role_name, limit=3)
+            prodi_c_text = "".join([f"**#{i}** {d['member'].display_name} - 🪙 {d['coins']}\n" for i, d in enumerate(prodi_coin_data, 1)])
+            embed.add_field(name=f"🤑 TOP 3 {role_name} (KOIN)", value=prodi_c_text or "-", inline=True)
+
+        embed.set_footer(text="DekVee Auto-Sync", icon_url=guild.icon.url if guild.icon else None)
+
+        # 6. Kirim ke Discord
         if self.dashboard_message:
             try:
                 await self.dashboard_message.edit(embed=embed)
@@ -115,13 +118,6 @@ class Dashboard(commands.Cog):
         else:
             await channel.purge(limit=10)
             self.dashboard_message = await channel.send(embed=embed, silent=True)
-
-    @commands.command()
-    @commands.has_permissions(administrator=True)
-    async def spawnstats(self, ctx):
-        try: await ctx.message.delete()
-        except: pass
-        await self.update_dashboard()
 
 async def setup(bot):
     await bot.add_cog(Dashboard(bot))

@@ -11,6 +11,8 @@ class PrivateHelpDropdown(discord.ui.Select):
     def __init__(self):
         opsi = [
             discord.SelectOption(label="Leveling & Rank", description="Panduan sistem XP dan Role Hunter", emoji="🏆"),
+            discord.SelectOption(label="Ekonomi & Koin", description="Cara mendapatkan koin dan dompet digital", emoji="🪙"),
+            discord.SelectOption(label="Musik & Soundboard", description="Panduan memutar lagu & efek suara", emoji="🎵"),
             discord.SelectOption(label="Voice Log", description="Panduan statistik durasi Voice Channel", emoji="🔊"),
             discord.SelectOption(label="Admin Menu", description="Panduan command khusus Admin/Owner", emoji="👑")
         ]
@@ -28,6 +30,45 @@ class PrivateHelpDropdown(discord.ui.Select):
             )
             embed.add_field(name="`!rank`", value="Melihat profil level, rank Hunter, dan progress bar XP kamu saat ini.", inline=False)
             embed.add_field(name="`!leaderboard`", value="Melihat 10 Hunter dengan level dan XP tertinggi di server.", inline=False)
+            embed.add_field(name="🎁 Reward Koin", value="Setiap kali kamu Naik Level, kamu otomatis mendapat bonus **+5 Koin**. Jika naik Rank/Role, dapat tambahan **+10 Koin**!", inline=False)
+
+        elif val == "Ekonomi & Koin":
+            embed = discord.Embed(
+                title="🪙 Panduan Sistem Koin",
+                description="Koin digunakan sebagai mata uang server untuk menggunakan fitur hiburan seperti Musik dan Soundboard.",
+                color=discord.Color.yellow()
+            )
+            embed.add_field(
+                name="💼 Cara Mendapatkan Koin", 
+                value=(
+                    "• Tiap akumulasi **50 XP** = 1 Koin\n"
+                    "• Tiap **5 chat** = 1 Koin (Max 10 per hari)\n"
+                    "• **Naik Level** = 5 Koin\n"
+                    "• **Naik Rank** = 10 Koin"
+                ), 
+                inline=False
+            )
+            embed.add_field(name="`!koinku`", value="Mengecek sisa saldo koin di dompetmu. Terdapat juga tombol rahasia untuk melihat riwayat keluar-masuk koin.", inline=False)
+
+        elif val == "Musik & Soundboard":
+            embed = discord.Embed(
+                title="🎵 Panduan Musik & Soundboard",
+                description="Bikin suasana nongkrong di Voice Channel makin asyik! *(Catatan: Kamu wajib berada di Voice Channel untuk menggunakan fitur ini)*",
+                color=discord.Color.purple()
+            )
+            embed.add_field(
+                name="`!music <link_lagu>`", 
+                value=(
+                    "Memutar lagu dari YouTube, Spotify, atau Apple Music. Akan memunculkan UI interaktif (Play, Pause, Skip, Antrean).\n"
+                    "🪙 **Biaya:** 3 Koin (Untuk 1 Lagu) | 10 Koin (Untuk 1 Playlist)"
+                ), 
+                inline=False
+            )
+            embed.add_field(
+                name="`!sb <nama_efek>`", 
+                value="Memutar efek suara instan (Soundboard) ke dalam ruangan Voice Channel-mu.\n🪙 **Biaya:** 2 Koin (Setiap 1x pencet)", 
+                inline=False
+            )
 
         elif val == "Voice Log":
             embed = discord.Embed(
