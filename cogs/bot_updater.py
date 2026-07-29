@@ -176,20 +176,22 @@ async def send_announcement_embed(interaction, bot, update_type, nama, jenis=Non
 
     if update_type == "new_or_remove":
         icon = "✨" if "baru" in str(jenis).lower() else "🗑️"
-        # Memindahkan deskripsi ke area yang muat 4096 karakter agar tidak error
-        embed.description = f"Ada pembaruan sistem bot terbaru dari tim Developer!\n\n**📝 Deskripsi:**\n```\n{deskripsi}\n```"
+        # Menaruh pengantar di deskripsi atas
+        embed.description = "Ada pembaruan sistem bot terbaru dari tim Developer!"
+        
+        # PERBAIKAN URUTAN: Field dieksekusi berurutan dari atas ke bawah
         embed.add_field(name=f"{icon} Status Fitur", value=f"**{jenis.upper()}**", inline=False)
         embed.add_field(name="🛠️ Nama Fitur", value=f"> {nama}", inline=False)
+        # Memotong deskripsi di 1010 karakter agar terhindar dari limit Discord (1024)
+        embed.add_field(name="📝 Deskripsi:", value=f"```\n{deskripsi[:1010]}\n```", inline=False)
 
     elif update_type == "update":
         embed.description = f"Pembaruan dan optimasi sistem telah diterapkan!"
         embed.add_field(name="🔄 Nama Fitur", value=f"**{nama}**", inline=False)
-        # Mengamankan batas field 1024 karakter
         embed.add_field(name="❌ Sebelum", value=f"> {sebelum}"[:1020], inline=False)
         embed.add_field(name="✅ Sesudah", value=f"> {sesudah}"[:1020], inline=False)
 
     elif update_type == "multi":
-        # Menggunakan embed.description untuk Patch Notes agar teks di atas 1024 karakter tetap lolos
         embed.description = f"Ada banyak peningkatan dan perbaikan (Patch Notes) yang baru saja diterapkan!\n\n**📌 {nama}**\n\n**Daftar Perubahan:**\n{deskripsi}"
 
     embed.set_footer(text=f"Diupdate oleh {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
