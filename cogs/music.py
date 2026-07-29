@@ -18,6 +18,12 @@ class MusicUI(discord.ui.View):
 
     @discord.ui.button(label="Pause/Resume", style=discord.ButtonStyle.primary)
     async def pause_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # CEK KEPEMILIKAN LAGU
+        guild_session = self.cog.music_sessions.get(interaction.guild.id)
+        if guild_session and interaction.user.id != guild_session.get('requester_id'):
+            await interaction.response.send_message("❌ Hanya orang yang menyetel lagu ini yang bisa menjeda atau melanjutkannya!", ephemeral=True)
+            return
+
         vc = interaction.guild.voice_client
         if vc:
             if vc.is_paused():
@@ -33,6 +39,12 @@ class MusicUI(discord.ui.View):
 
     @discord.ui.button(label="Stop/Skip", style=discord.ButtonStyle.secondary)
     async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # CEK KEPEMILIKAN LAGU
+        guild_session = self.cog.music_sessions.get(interaction.guild.id)
+        if guild_session and interaction.user.id != guild_session.get('requester_id'):
+            await interaction.response.send_message("❌ Hanya orang yang menyetel lagu ini yang bisa melewatinya (Skip)!", ephemeral=True)
+            return
+
         vc = interaction.guild.voice_client
         if vc and (vc.is_playing() or vc.is_paused()):
             vc.stop() # Memanggil stop() akan otomatis memicu lagu berikutnya di antrean
@@ -42,6 +54,7 @@ class MusicUI(discord.ui.View):
 
     @discord.ui.button(label="Antrean", style=discord.ButtonStyle.success)
     async def queue_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Tombol antrean bebas dilihat siapa saja
         queue = self.cog.queues.get(interaction.guild.id, [])
         if not queue:
             await interaction.response.send_message("Antrean saat ini kosong.", ephemeral=True)
