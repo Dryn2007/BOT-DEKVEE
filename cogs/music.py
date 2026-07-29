@@ -4,12 +4,6 @@ import asyncio
 import yt_dlp
 import aiohttp
 import re
-import os
-import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
-from dotenv import load_dotenv
-
-load_dotenv() # Memuat token dari file .env
 
 class MusicUI(discord.ui.View):
     def __init__(self, bot, ctx, cog):
@@ -28,10 +22,10 @@ class MusicUI(discord.ui.View):
         if vc:
             if vc.is_paused():
                 vc.resume()
-                await interaction.response.send_message("🎵 Musik dilanjutkan.", ephemeral=True)
+                await interaction.response.send_message("▶ Musik dilanjutkan.", ephemeral=True)
             elif vc.is_playing():
                 vc.pause()
-                await interaction.response.send_message("⏸️ Musik dijeda.", ephemeral=True)
+                await interaction.response.send_message("⏸ Musik dijeda.", ephemeral=True)
             else:
                 await interaction.response.send_message("Tidak ada musik yang sedang diputar.", ephemeral=True)
         else:
@@ -41,8 +35,8 @@ class MusicUI(discord.ui.View):
     async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         vc = interaction.guild.voice_client
         if vc and (vc.is_playing() or vc.is_paused()):
-            vc.stop()
-            await interaction.response.send_message("⏭️ Lagu dilewati (Skip)! Memutar antrean berikutnya...", ephemeral=True)
+            vc.stop() # Memanggil stop() akan otomatis memicu lagu berikutnya di antrean
+            await interaction.response.send_message("⏭ Lagu dilewati (Skip)! Memutar antrean berikutnya...", ephemeral=True)
         else:
             await interaction.response.send_message("Tidak ada musik yang sedang diputar.", ephemeral=True)
 
@@ -50,31 +44,20 @@ class MusicUI(discord.ui.View):
     async def queue_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         queue = self.cog.queues.get(interaction.guild.id, [])
         if not queue:
-            await interaction.response.send_message("📜 Antrean saat ini kosong.", ephemeral=True)
+            await interaction.response.send_message("Antrean saat ini kosong.", ephemeral=True)
         else:
             q_list = "\n".join([f"{i+1}. {q['query'].replace('ytsearch:', '')}" for i, q in enumerate(queue[:10])])
             if len(queue) > 10:
                 q_list += f"\n*...dan {len(queue) - 10} lagu lainnya.*"
-            await interaction.response.send_message(f"📜 **Daftar Antrean:**\n{q_list}", ephemeral=True)
-
+            await interaction.response.send_message(f"**Daftar Antrean:**\n{q_list}", ephemeral=True)
 
 class Music(commands.Cog):
     def __init__(self, bot, pool):
         self.bot = bot
         self.pool = pool
         self.music_sessions = {}
-        self.queues = {}
-        
-        # Mesin Spotify API
-        try:
-            self.sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
-                client_id=os.getenv("SPOTIPY_CLIENT_ID"),
-                client_secret=os.getenv("SPOTIPY_CLIENT_SECRET")
-            ))
-        except Exception as e:
-            print(f"Peringatan: Gagal memuat Spotify API. Cek .env! ({e})")
-            self.sp = None
-        
+        self.queues = {} # Memori antrean untuk setiap server
+
         self.YDL_OPTIONS = {
             'format': 'bestaudio/best',
             'restrictfilenames': True,
@@ -86,9 +69,8 @@ class Music(commands.Cog):
             'no_warnings': True,
             'default_search': 'auto',
             'source_address': '0.0.0.0',
-            'cookiefile': 'cookies.txt'
+            'cookiefile': 'cookies.txt' # KUNCI ANTI-BAN YOUTUBE
         }
-        
         self.FFMPEG_OPTIONS = {
             'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
             'options': '-vn'
@@ -102,6 +84,7 @@ class Music(commands.Cog):
         return False
 
     async def convert_link(self, url):
+        # 1. Jika URL dari Spotify (Scraping Judul Web untuk Akurasi)
         if "spotify.com" in url:
             try:
                 async with aiohttp.ClientSession() as session:
@@ -114,7 +97,7 @@ class Music(commands.Cog):
                                 title = match.group(1).split('|')[0].replace("- Spotify", "").strip()
                                 return f"{title} audio"
             except Exception as e: print(f"Gagal translate Spotify: {e}")
-                
+        # 2. Jika URL dari Apple Music
         elif "apple.com" in url:
             try:
                 async with aiohttp.ClientSession() as session:
@@ -124,10 +107,10 @@ class Music(commands.Cog):
                             html = await resp.text()
                             match = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE)
                             if match:
-                                title = match.group(1).replace(" on Apple Music", "").replace(" - Apple Music", "")
+                                title = match.group(1).replace(" on Apple Music", "").replace("- Apple Music", "")
                                 return f"{title} audio"
             except Exception as e: print(f"Gagal translate Apple Music: {e}")
-                
+        # 3. Jika URL dari YouTube Single Track
         elif "youtube.com" in url or "youtu.be" in url:
             try:
                 async with aiohttp.ClientSession() as session:
@@ -137,7 +120,6 @@ class Music(commands.Cog):
                             title = data.get('title', '')
                             return f"{title} audio"
             except Exception as e: print(f"Gagal translate YouTube: {e}")
-                
         return url
 
     async def play_next(self, ctx):
@@ -148,18 +130,21 @@ class Music(commands.Cog):
         guild_id = ctx.guild.id
         queue = self.queues.get(guild_id, [])
 
+        # Menghapus UI Player lagu sebelumnya agar chat bersih
         guild_session = self.music_sessions.get(guild_id, {})
         old_msg = guild_session.get('player_msg')
         if old_msg:
             try: await old_msg.delete()
             except: pass
 
+        # Jika antrean sudah habis, bot keluar
         if not queue:
-            await ctx.send("🎶 **Antrean habis.** Bot keluar dari Voice Channel.", delete_after=10.0)
+            await ctx.send("Antrean habis. Bot keluar dari Voice Channel.", delete_after=10.0)
             await vc.disconnect()
             self.music_sessions.pop(guild_id, None)
             return
 
+        # Ambil lagu urutan pertama dari antrean
         next_track = queue.pop(0)
         query = next_track['query']
         requester = next_track['requester']
@@ -178,12 +163,14 @@ class Music(commands.Cog):
             await loading_msg.edit(content=f"❌ Gagal memutar lagu. Lanjut ke lagu berikutnya...")
             await asyncio.sleep(3)
             await loading_msg.delete()
-            return await self.play_next(ctx)
+            return await self.play_next(ctx) # Lanjut ke antrean berikutnya jika error
 
+        # Putar Audio (Volume 70%)
         try:
             source = discord.FFmpegPCMAudio(audio_url, **self.FFMPEG_OPTIONS)
             source = discord.PCMVolumeTransformer(source, volume=0.7)
 
+            # Callback: Begitu lagu ini selesai, putar lagu berikutnya
             def after_playing(err):
                 if err: print(f"Error FFmpeg: {err}")
                 asyncio.run_coroutine_threadsafe(self.play_next(ctx), self.bot.loop)
@@ -195,6 +182,7 @@ class Music(commands.Cog):
             await loading_msg.delete()
             return await self.play_next(ctx)
 
+        # Kirim UI Player Baru
         embed = discord.Embed(
             title="🎵 Now Playing (DekVee Music)",
             description=f"**{title}**",
@@ -203,11 +191,11 @@ class Music(commands.Cog):
         file = discord.File("assets/coin.png", filename="coin.png")
         embed.set_thumbnail(url="attachment://coin.png")
         embed.set_footer(text=f"Requested by {requester.name} | Sisa Antrean: {len(queue)}", icon_url=requester.display_avatar.url)
-        
+
         view = MusicUI(self.bot, ctx, self)
         await loading_msg.delete()
         player_msg = await ctx.send(file=file, embed=embed, view=view)
-        
+
         self.music_sessions[guild_id] = {
             'requester_id': requester.id,
             'player_msg': player_msg
@@ -222,7 +210,12 @@ class Music(commands.Cog):
             await ctx.send(f"❌ {ctx.author.mention}, kamu harus masuk room voice dulu ya!", delete_after=5.0)
             return
 
-        cost = 10 if ("playlist" in query.lower() or "&list=" in query.lower() or "album" in query.lower()) else 3
+        # Peringatan Tegas: Hanya Playlist YouTube yang didukung!
+        if ("spotify.com" in query or "apple.com" in query) and ("playlist" in query or "album" in query):
+            await ctx.send("❌ **Peringatan! Fitur Playlist saat ini HANYA mendukung link dari YouTube**. Silakan gunakan link Playlist YouTube ya!", delete_after=10.0)
+            return
+
+        cost = 10 if ("playlist" in query.lower() or "&list=" in query.lower()) else 3
         has_enough_coins = await self.deduct_coins(ctx.author.id, cost)
         if not has_enough_coins:
             await ctx.send(f"🪙 Koin kamu tidak cukup! Butuh **{cost} koin**.", delete_after=5.0)
@@ -231,6 +224,7 @@ class Music(commands.Cog):
         if ctx.guild.id not in self.queues:
             self.queues[ctx.guild.id] = []
 
+        # Masukkan bot ke Voice
         voice_channel = ctx.author.voice.channel
         vc = discord.utils.get(self.bot.voice_clients, guild=ctx.guild)
         if not vc:
@@ -259,102 +253,47 @@ class Music(commands.Cog):
                 await msg.delete()
             except Exception as e:
                 await msg.edit(content="❌ Gagal membaca playlist YouTube.")
-                return
+            return
 
-        # 2. BONGKAR PLAYLIST / ALBUM SPOTIFY
-        elif "spotify.com/playlist" in query or "spotify.com/album" in query:
-            if not self.sp:
-                await ctx.send("❌ Fitur Spotify Playlist sedang tidak aktif. Cek API Token!")
-                return
-                
-            msg = await ctx.send("⏳ Membongkar daftar lagu dari Spotify...")
-            try:
-                added = 0
-                loop = asyncio.get_event_loop()
-                
-                if "playlist" in query:
-                    def get_spotify_playlist():
-                        results = self.sp.playlist_tracks(query)
-                        tracks = results['items']
-                        while results['next']:
-                            results = self.sp.next(results)
-                            tracks.extend(results['items'])
-                        return tracks
-                        
-                    tracks = await loop.run_in_executor(None, get_spotify_playlist)
-                    
-                    for item in tracks:
-                        track = item.get('track')
-                        if track:
-                            title = track['name']
-                            artist = track['artists'][0]['name']
-                            self.queues[ctx.guild.id].append({
-                                'query': f"ytsearch:{title} {artist} audio",
-                                'requester': ctx.author
-                            })
-                            added += 1
-
-                elif "album" in query:
-                    def get_spotify_album():
-                        results = self.sp.album_tracks(query)
-                        return results['items']
-                        
-                    tracks = await loop.run_in_executor(None, get_spotify_album)
-                    
-                    for track in tracks:
-                        title = track['name']
-                        artist = track['artists'][0]['name']
-                        self.queues[ctx.guild.id].append({
-                            'query': f"ytsearch:{title} {artist} audio",
-                            'requester': ctx.author
-                        })
-                        added += 1
-
-                await msg.edit(content=f"✅ Berhasil memasukkan **{added} lagu** dari Spotify ke dalam antrean!")
-                await asyncio.sleep(5)
-                await msg.delete()
-            except Exception as e:
-                print(f"Error Spotify Playlist: {e}")
-                await msg.edit(content="❌ Gagal membaca playlist Spotify. Pastikan link valid dan bukan playlist Private.")
-                return
-        
-        # 3. LAGU SATUAN
+        # 2. LAGU SATUAN
         else:
             if "spotify.com" in query or "apple.com" in query or "youtube.com" in query or "youtu.be" in query:
                 query = await self.convert_link(query)
 
             if not query.startswith("http"):
                 query = f"ytsearch:{query}"
-            
+
             self.queues[ctx.guild.id].append({
                 'query': query,
                 'requester': ctx.author
             })
-            
+
             if vc.is_playing() or vc.is_paused():
                 await ctx.send(f"✅ **Ditambahkan ke antrean:** {query.replace('ytsearch:', '')}", delete_after=5.0)
 
-        # 4. PUTAR JIKA MENGANGGUR
+        # 3. PUTAR JIKA MENGANGGUR
         if not vc.is_playing() and not vc.is_paused():
             await self.play_next(ctx)
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
         if member.bot: return
-        
+
         guild_id = member.guild.id
         guild_session = self.music_sessions.get(guild_id)
+
         if guild_session:
+            # Otomatis bubar & hapus UI jika requester keluar room
             if member.id == guild_session['requester_id'] and before.channel is not None and after.channel is None:
                 vc = discord.utils.get(self.bot.voice_clients, guild=member.guild)
                 if vc and vc.is_connected():
                     await vc.disconnect()
-                    
+
                 player_msg = guild_session.get('player_msg')
                 if player_msg:
                     try: await player_msg.delete()
                     except: pass
-                        
+
                 self.music_sessions.pop(guild_id, None)
                 self.queues.pop(guild_id, None)
 
