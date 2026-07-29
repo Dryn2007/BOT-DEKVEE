@@ -72,7 +72,7 @@ class Music(commands.Cog):
         self.queues = {} # Memori antrean untuk setiap server
 
         self.YDL_OPTIONS = {
-            'format': 'bestaudio/best',
+            'format': 'bestaudio[ext=m4a]/bestaudio/best', # FORMAT LEBIH RINGAN
             'restrictfilenames': True,
             'noplaylist': True,
             'nocheckcertificate': True,
@@ -85,8 +85,8 @@ class Music(commands.Cog):
             'cookiefile': 'cookies.txt' # KUNCI ANTI-BAN YOUTUBE
         }
         self.FFMPEG_OPTIONS = {
-            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-            'options': '-vn'
+            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -reconnect_on_network_error 1', # AUTO RECONNECT
+            'options': '-vn -b:a 128k' # BATASAN BITRATE AGAR TIDAK NGELAG
         }
 
     async def deduct_coins(self, user_id, amount):
