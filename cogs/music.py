@@ -93,18 +93,18 @@ class Music(commands.Cog):
         self.pause_tasks = {} # Memori khusus untuk menyimpan timer jeda per server
 
         self.YDL_OPTIONS = {
+            'listformats': True,  # 1. TAMBAHKAN INI UNTUK MELIHAT LIST
             'format': 'bestaudio/best',
             'restrictfilenames': True,
             'noplaylist': True,
             'nocheckcertificate': True,
             'ignoreerrors': True,
             'logtostderr': False,
-            'quiet': True,
-            'no_warnings': True,
+            'quiet': False,       # 2. UBAH JADI FALSE agar teksnya muncul di log
+            'no_warnings': False, # 3. UBAH JADI FALSE agar pesan peringatan tidak disembunyikan
             'default_search': 'auto',
             'source_address': '0.0.0.0',
             'cookiefile': 'cookies.txt',
-            # MANIPULASI TINGKAT LANJUT
             'extractor_args': {'youtube': ['client=tv,android,ios']},
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
