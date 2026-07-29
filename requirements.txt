@@ -4,5 +4,5 @@ asyncpg
 easy-pil
 oci
 PyNaCl
-yt-dlp
+yt-dlp>=2024.03.10
 aiohttp

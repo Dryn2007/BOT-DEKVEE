@@ -103,7 +103,11 @@ class Music(commands.Cog):
             'no_warnings': True,
             'default_search': 'auto',
             'source_address': '0.0.0.0',
-            'cookiefile': 'cookies.txt'
+            'cookiefile': 'cookies.txt',
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept-Language': 'en-US,en;q=0.9',
+            }
         }
         self.FFMPEG_OPTIONS = {
             'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
