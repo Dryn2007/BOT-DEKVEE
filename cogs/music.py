@@ -72,7 +72,7 @@ class Music(commands.Cog):
         self.queues = {} # Memori antrean untuk setiap server
 
         self.YDL_OPTIONS = {
-            'format': 'bestaudio[ext=m4a]/bestaudio/best',
+            'format': 'bestaudio/best',
             'restrictfilenames': True,
             'noplaylist': True,
             'nocheckcertificate': True,
@@ -85,8 +85,8 @@ class Music(commands.Cog):
             'cookiefile': 'cookies.txt'
         }
         self.FFMPEG_OPTIONS = {
-            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -reconnect_on_network_error 1',
-            'options': '-vn -filter:a "volume=0.7"'
+            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+            'options': '-vn' # AUDIO MURNI TANPA FILTER APAPUN AGAR CPU ENTENG
         }
 
     async def deduct_coins(self, user_id, amount):
@@ -179,13 +179,12 @@ class Music(commands.Cog):
             await loading_msg.edit(content=f"❌ Gagal memutar lagu. Lanjut ke lagu berikutnya...")
             await asyncio.sleep(3)
             await loading_msg.delete()
-            return await self.play_next(ctx) # Lanjut ke antrean berikutnya jika error
+            return await self.play_next(ctx)
 
-        # Putar Audio
+        # Putar Audio (VERSI PALING RINGAN UNTUK CPU)
         try:
             source = discord.FFmpegPCMAudio(audio_url, **self.FFMPEG_OPTIONS)
             
-            # Callback: Begitu lagu ini selesai, putar lagu berikutnya
             def after_playing(err):
                 if err: print(f"Error FFmpeg: {err}")
                 asyncio.run_coroutine_threadsafe(self.play_next(ctx), self.bot.loop)
@@ -225,7 +224,6 @@ class Music(commands.Cog):
             await ctx.send(f"❌ {ctx.author.mention}, kamu harus masuk room voice dulu ya!", delete_after=5.0)
             return
 
-        # Peringatan Tegas: Hanya Playlist YouTube yang didukung!
         if ("spotify.com" in query or "apple.com" in query) and ("playlist" in query or "album" in query):
             await ctx.send("❌ **Peringatan! Fitur Playlist saat ini HANYA mendukung link dari YouTube**. Silakan gunakan link Playlist YouTube ya!", delete_after=10.0)
             return
@@ -239,7 +237,6 @@ class Music(commands.Cog):
         if ctx.guild.id not in self.queues:
             self.queues[ctx.guild.id] = []
 
-        # Masukkan bot ke Voice
         voice_channel = ctx.author.voice.channel
         vc = discord.utils.get(self.bot.voice_clients, guild=ctx.guild)
         if not vc:
@@ -247,7 +244,6 @@ class Music(commands.Cog):
         elif vc.channel != voice_channel:
             await vc.move_to(voice_channel)
 
-        # 1. BONGKAR PLAYLIST YOUTUBE
         if "youtube.com/playlist" in query or "&list=" in query:
             msg = await ctx.send("⏳ Membongkar daftar lagu dari Playlist YouTube...")
             ydl_opts = {'extract_flat': True, 'quiet': True}
@@ -270,7 +266,6 @@ class Music(commands.Cog):
                 await msg.edit(content="❌ Gagal membaca playlist YouTube.")
                 return 
 
-        # 2. LAGU SATUAN
         else:
             if "spotify.com" in query or "apple.com" in query or "youtube.com" in query or "youtu.be" in query:
                 query = await self.convert_link(query)
@@ -286,33 +281,27 @@ class Music(commands.Cog):
             if vc.is_playing() or vc.is_paused():
                 await ctx.send(f"✅ **Ditambahkan ke antrean:** {query.replace('ytsearch:', '')}", delete_after=5.0)
 
-        # 3. PUTAR JIKA MENGANGGUR
         if not vc.is_playing() and not vc.is_paused():
             await self.play_next(ctx)
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
-        # Abaikan jika yang keluar-masuk adalah bot itu sendiri
         if member.bot: 
             return
 
-        # Cek apakah bot sedang berada di voice channel server ini
         vc = discord.utils.get(self.bot.voice_clients, guild=member.guild)
         if not vc or not vc.is_connected():
             return
 
-        # PERBAIKAN LOGIKA: Jika bot sendirian di dalam room (hanya tersisa 1 member yaitu bot)
         if len(vc.channel.members) == 1:
-            await asyncio.sleep(3) # Tunggu 3 detik 
+            await asyncio.sleep(3) 
             
-            # Cek lagi, kalau masih sendirian, bot langsung keluar
             if len(vc.channel.members) == 1:
                 await vc.disconnect()
                 
                 guild_id = member.guild.id
                 guild_session = self.music_sessions.get(guild_id)
                 
-                # Bersihkan sisa-sisa UI
                 if guild_session:
                     player_msg = guild_session.get('player_msg')
                     if player_msg:
