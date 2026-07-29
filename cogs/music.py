@@ -266,7 +266,7 @@ class Music(commands.Cog):
                 await msg.delete()
             except Exception as e:
                 await msg.edit(content="❌ Gagal membaca playlist YouTube.")
-            return
+                return # <-- PERBAIKAN: Perintah return digeser ke dalam blok except agar lagu bisa langsung play.
 
         # 2. LAGU SATUAN
         else:
