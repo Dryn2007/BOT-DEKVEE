@@ -46,8 +46,8 @@ class MusicUI(discord.ui.View):
         if not queue:
             await interaction.response.send_message("📜 Antrean saat ini kosong.", ephemeral=True)
         else:
-            # Memunculkan maksimal 10 lagu pertama di antrean
-            q_list = "\n".join([f"{i+1}. {q['query'].replace('scsearch:', '')}" for i, q in enumerate(queue[:10])])
+            # Memunculkan maksimal 10 lagu pertama di antrean (Ganti scsearch jadi ytsearch)
+            q_list = "\n".join([f"{i+1}. {q['query'].replace('ytsearch:', '')}" for i, q in enumerate(queue[:10])])
             if len(queue) > 10:
                 q_list += f"\n*...dan {len(queue) - 10} lagu lainnya.*"
             await interaction.response.send_message(f"📜 **Daftar Antrean:**\n{q_list}", ephemeral=True)
@@ -60,11 +60,19 @@ class Music(commands.Cog):
         self.music_sessions = {}
         self.queues = {} # Memori antrean untuk setiap server
         
+        # PERBAIKAN: Menambahkan pengamanan Cookies dan setting optimal yt-dlp
         self.YDL_OPTIONS = {
             'format': 'bestaudio/best',
+            'restrictfilenames': True,
             'noplaylist': True,
+            'nocheckcertificate': True,
+            'ignoreerrors': False,
+            'logtostderr': False,
             'quiet': True,
-            'default_search': 'auto'
+            'no_warnings': True,
+            'default_search': 'auto',
+            'source_address': '0.0.0.0',
+            'cookiefile': 'cookies.txt' # KUNCI ANTI-BAN YOUTUBE
         }
         
         self.FFMPEG_OPTIONS = {
@@ -80,7 +88,7 @@ class Music(commands.Cog):
         return False
 
     async def convert_link(self, url):
-        # 1. Jika URL dari Spotify (Hanya single track yang lolos ke sini)
+        # 1. Jika URL dari Spotify
         if "spotify.com" in url:
             try:
                 async with aiohttp.ClientSession() as session:
@@ -147,7 +155,7 @@ class Music(commands.Cog):
         query = next_track['query']
         requester = next_track['requester']
 
-        loading_msg = await ctx.send(f"⏳ Memproses lagu: **{query.replace('scsearch:', '')}**...")
+        loading_msg = await ctx.send(f"⏳ Memproses lagu: **{query.replace('ytsearch:', '')}**...")
 
         loop = asyncio.get_event_loop()
         try:
@@ -243,7 +251,7 @@ class Music(commands.Cog):
                             title = entry.get('title')
                             if title:
                                 self.queues[ctx.guild.id].append({
-                                    'query': f"scsearch:{title}",
+                                    'query': f"ytsearch:{title}", # PERBAIKAN: Gunakan ytsearch
                                     'requester': ctx.author
                                 })
                 await msg.edit(content=f"✅ Berhasil memasukkan **{len(info['entries'])} lagu** ke dalam antrean!")
@@ -258,8 +266,9 @@ class Music(commands.Cog):
             if "spotify.com" in query or "apple.com" in query or "youtube.com" in query or "youtu.be" in query:
                 query = await self.convert_link(query)
 
+            # PERBAIKAN: Gunakan ytsearch alih-alih scsearch
             if not query.startswith("http"):
-                query = f"scsearch:{query}"
+                query = f"ytsearch:{query}"
             
             self.queues[ctx.guild.id].append({
                 'query': query,
@@ -267,7 +276,7 @@ class Music(commands.Cog):
             })
             
             if vc.is_playing() or vc.is_paused():
-                await ctx.send(f"✅ **Ditambahkan ke antrean:** {query.replace('scsearch:', '')}", delete_after=5.0)
+                await ctx.send(f"✅ **Ditambahkan ke antrean:** {query.replace('ytsearch:', '')}", delete_after=5.0)
 
         # 3. PUTAR JIKA MENGANGGUR
         if not vc.is_playing() and not vc.is_paused():
