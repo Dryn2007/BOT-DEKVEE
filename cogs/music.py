@@ -93,23 +93,17 @@ class Music(commands.Cog):
         self.pause_tasks = {} # Memori khusus untuk menyimpan timer jeda per server
 
         self.YDL_OPTIONS = {
-            'listformats': True,  # 1. TAMBAHKAN INI UNTUK MELIHAT LIST
             'format': 'bestaudio/best',
             'restrictfilenames': True,
             'noplaylist': True,
             'nocheckcertificate': True,
-            'ignoreerrors': True,
+            'ignoreerrors': False,
             'logtostderr': False,
-            'quiet': False,       # 2. UBAH JADI FALSE agar teksnya muncul di log
-            'no_warnings': False, # 3. UBAH JADI FALSE agar pesan peringatan tidak disembunyikan
+            'quiet': True,
+            'no_warnings': True,
             'default_search': 'auto',
             'source_address': '0.0.0.0',
-            'cookiefile': 'cookies.txt',
-            'extractor_args': {'youtube': ['client=tv,android,ios']},
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept-Language': 'en-US,en;q=0.9',
-            }
+            'cookiefile': 'cookies.txt'
         }
         self.FFMPEG_OPTIONS = {
             'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
@@ -241,9 +235,21 @@ class Music(commands.Cog):
         }
 
     @commands.command(name="music")
-    async def play_music(self, ctx, *, query: str):
+    async def play_music(self, ctx, *, query: str = None):
+        # Hapus pesan trigger (!music) milik user
         try: await ctx.message.delete()
         except: pass
+
+        # Kirim peringatan fitur mati sementara
+        warning_msg = await ctx.send(f"⚠️ {ctx.author.mention}, Fitur `!music` sedang dalam perbaikan dan dimatikan sementara waktu.")
+        
+        # Hapus pesan peringatan setelah 5 detik
+        await asyncio.sleep(5)
+        try: await warning_msg.delete()
+        except: pass
+        
+        # Berhenti di sini, fungsi musik di bawahnya tidak akan dieksekusi
+        return
 
         if not ctx.author.voice or not ctx.author.voice.channel:
             await ctx.send(f"❌ {ctx.author.mention}, kamu harus masuk room voice dulu ya!", delete_after=5.0)
