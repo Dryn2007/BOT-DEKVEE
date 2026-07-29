@@ -244,6 +244,7 @@ class Music(commands.Cog):
         elif vc.channel != voice_channel:
             await vc.move_to(voice_channel)
 
+        # 1. BONGKAR PLAYLIST YOUTUBE
         if "youtube.com/playlist" in query or "&list=" in query:
             msg = await ctx.send("⏳ Membongkar daftar lagu dari Playlist YouTube...")
             ydl_opts = {'extract_flat': True, 'quiet': True}
@@ -259,13 +260,24 @@ class Music(commands.Cog):
                                     'query': f"ytsearch:{title}",
                                     'requester': ctx.author
                                 })
+                
                 await msg.edit(content=f"✅ Berhasil memasukkan **{len(info['entries'])} lagu** ke dalam antrean!")
+                
+                # PERBAIKAN: Langsung pancing lagu agar terputar tanpa nunggu pesan terhapus!
+                if not vc.is_playing() and not vc.is_paused():
+                    await self.play_next(ctx)
+                
+                # Baru tunggu 5 detik santai di latar belakang
                 await asyncio.sleep(5)
-                await msg.delete()
+                try: await msg.delete()
+                except: pass
+                return 
+
             except Exception as e:
                 await msg.edit(content="❌ Gagal membaca playlist YouTube.")
                 return 
 
+        # 2. LAGU SATUAN
         else:
             if "spotify.com" in query or "apple.com" in query or "youtube.com" in query or "youtu.be" in query:
                 query = await self.convert_link(query)
@@ -281,6 +293,7 @@ class Music(commands.Cog):
             if vc.is_playing() or vc.is_paused():
                 await ctx.send(f"✅ **Ditambahkan ke antrean:** {query.replace('ytsearch:', '')}", delete_after=5.0)
 
+        # 3. PUTAR JIKA MENGANGGUR
         if not vc.is_playing() and not vc.is_paused():
             await self.play_next(ctx)
 
