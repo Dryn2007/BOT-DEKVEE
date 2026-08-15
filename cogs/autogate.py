@@ -77,7 +77,7 @@ class AutoGate(commands.Cog):
             ''')
             self.is_ready = True
             print("✅ Tabel Keamanan SKL (skl_registry) siap!")
-            
+
             # FITUR CATCH UP DIHAPUS DARI SINI AGAR TIDAK SPAM SAAT RESTART
 
     async def panggil_gemini_api(self, prompt, image_data, mime_type):
@@ -344,14 +344,44 @@ class AutoGate(commands.Cog):
                         except discord.Forbidden:
                             pass
 
+                        # === EKSTRAKSI NAMA LENGKAP DARI SKL ===
+                        # Gunakan Gemini sekali lagi untuk extract nama lengkap
+                        nama_lengkap_skl = None
+                        try:
+                            prompt_nama = (
+                                "Dari teks berikut, ekstrak HANYA nama lengkap siswa/mahasiswa. "
+                                "Kembalikan HANYA nama lengkapnya saja, tanpa penjelasan lain.\n\n"
+                                f"Teks dokumen:\n{hasil_mentah}"
+                            )
+                            # Panggil Gemini text-only (tanpa gambar) untuk parsing nama
+                            await self.gemini_limiter.acquire()
+                            clean_key = gemini_key.strip()
+                            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={clean_key}"
+                            payload_nama = {
+                                "contents": [{"parts": [{"text": prompt_nama}]}]
+                            }
+                            async with aiohttp.ClientSession() as sess:
+                                async with sess.post(url, json=payload_nama) as resp_nama:
+                                    if resp_nama.status == 200:
+                                        data_nama = await resp_nama.json()
+                                        raw_nama = data_nama.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '').strip()
+                                        # Bersihkan: hapus tanda kutip, newline, dll
+                                        raw_nama = raw_nama.strip('"\'').strip()
+                                        if len(raw_nama) >= 3 and len(raw_nama) <= 100:
+                                            nama_lengkap_skl = raw_nama.title()  # Capitalize properly
+                                            print(f"📝 Nama lengkap SKL terdeteksi: {nama_lengkap_skl}")
+                        except Exception as e:
+                            print(f"[WARN] Gagal extract nama lengkap: {e}")
+
+                        # === SIMPAN KE DATABASE (TERMASUK NAMA LENGKAP) ===
                         try:
                             await self.bot.pool.execute(
                                 "INSERT INTO skl_registry (no_reg, username) VALUES ($1, $2) ON CONFLICT (no_reg) DO NOTHING",
                                 no_reg, discord_username
                             )
                             await self.bot.pool.execute(
-                                "INSERT INTO maba_roles (username, role_name) VALUES ($1, $2)",
-                                discord_username, role_target_name
+                                "INSERT INTO maba_roles (username, role_name, full_name) VALUES ($1, $2, $3)",
+                                discord_username, role_target_name, nama_lengkap_skl
                             )
                         except Exception as e:
                             print(f"[DB ERROR] Gagal input ke database: {e}")
@@ -405,7 +435,7 @@ class AutoGate(commands.Cog):
     async def on_member_remove(self, member):
         # Mengirim notifikasi ke channel pengumuman (bisa diubah ke channel lain jika mau)
         pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
-        
+
         if pengumuman_channel:
             embed_leave = discord.Embed(
                 title="👋 Seseorang Telah Pergi...",
@@ -413,7 +443,7 @@ class AutoGate(commands.Cog):
                 color=discord.Color.red()
             )
             embed_leave.set_thumbnail(url=member.display_avatar.url)
-            
+
             await pengumuman_channel.send(embed=embed_leave)
             print(f"Member keluar: {member.name}")
 
