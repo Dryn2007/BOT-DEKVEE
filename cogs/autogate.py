@@ -82,8 +82,16 @@ class AutoGate(commands.Cog):
                     username TEXT
                 )
             ''')
+            # (BARU) Tambahkan kolom sync_discord ke tabel users jika belum ada
+            try:
+                await self.bot.pool.execute('''
+                    ALTER TABLE users ADD COLUMN IF NOT EXISTS sync_discord BOOLEAN DEFAULT false
+                ''')
+            except Exception as e:
+                print(f"[DB WARN] Gagal alter table users (mungkin sudah ada atau bukan admin DB): {e}")
+
             self.is_ready = True
-            print("✅ Tabel Keamanan SKL (skl_registry) siap!")
+            print("✅ Tabel Keamanan SKL & Sync Discord siap!")
 
     # ==============================================================
     # FUNGSI SINKRONISASI VERIFIKASI DARI WEB KE DISCORD
@@ -100,11 +108,11 @@ class AutoGate(commands.Cog):
             return
 
         try:
-            # Cari user yang sudah verifikasi di web
+            # Cari user yang sudah verifikasi di web DAN belum pernah disinkronkan ke discord (sync_discord = false)
             records = await self.bot.pool.fetch("""
                 SELECT discord_id, prodi, full_name 
                 FROM users 
-                WHERE is_verified = true AND discord_id IS NOT NULL
+                WHERE is_verified = true AND sync_discord = false AND discord_id IS NOT NULL
             """)
 
             guild = self.bot.get_guild(self.guild_id)
@@ -148,18 +156,73 @@ class AutoGate(commands.Cog):
                     if target_role and not has_prodi_role:
                         roles_to_add.append(target_role)
 
+                    full_name = record['full_name']
+
                     # 4. Berikan role (jika ada yang kurang)
                     if roles_to_add:
                         try:
                             await member.add_roles(*roles_to_add)
                             role_names = ", ".join([r.name for r in roles_to_add])
                             print(f"🔄 Auto-Sync (Web->DC): Memberikan role [{role_names}] ke {member.name}")
-                                
                         except discord.Forbidden:
                             print(f"⚠️ Missing permission to add roles to {member.name}")
 
+                    # 4.5. ALWAYS Send notification and save to maba_roles for newly verified web users
+                    # Kita taruh di luar if roles_to_add: supaya kalau admin tes dan sudah punya rolenya,
+                    # notifikasi TETAP jalan dan tersimpan.
+                    if target_role_name:
+                        try:
+                            await self.bot.pool.execute(
+                                "INSERT INTO maba_roles (username, role_name, full_name) VALUES ($1, $2, $3) ON CONFLICT (username) DO UPDATE SET role_name = EXCLUDED.role_name, full_name = EXCLUDED.full_name",
+                                member.name, target_role_name, full_name
+                            )
+                            print(f"🔄 Auto-Sync (Web->DC): Disimpan ke maba_roles untuk {member.name}")
+                        except Exception as e:
+                            print(f"[DB ERROR] Gagal input ke maba_roles dari auto-sync: {e}")
+
+                    # Hapus Notifikasi 'HALT' di pos_satpam jika ada
+                    pos_satpam = self.bot.get_channel(self.pos_satpam_id)
+                    if pos_satpam:
+                        async for msg in pos_satpam.history(limit=50):
+                            if msg.author == self.bot.user and member.mention in msg.content:
+                                try:
+                                    await msg.delete()
+                                except:
+                                    pass
+                    
+
+                        
+                    # Kirim notif ke pengumuman
+                    pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
+                    if pengumuman_channel is None:
+                        try: pengumuman_channel = await self.bot.fetch_channel(self.pengumuman_id)
+                        except: pass
+                    
+                    if pengumuman_channel and target_role_name:
+                        embed_pengumuman = discord.Embed(
+                            title="🎉 MAHASISWA BARU TELAH TIBA!",
+                            description=f"Mari sambut **{nama_depan}** ({member.mention}) dari prodi **{target_role_name}** yang baru aja lolos verifikasi gerbang utama via Web!\nSelamat bergabung di kampus, jangan lupa mampir ke kantin virtual!",
+                            color=discord.Color.gold()
+                        )
+                        embed_pengumuman.set_thumbnail(url=member.display_avatar.url)
+                        try:
+                            await pengumuman_channel.send(embed=embed_pengumuman)
+                            print(f"✅ [WEB-SYNC] Berhasil mengirim pengumuman untuk {member.name}")
+                        except Exception as e:
+                            print(f"❌ [WEB-SYNC] Gagal kirim pengumuman: {e}")
+                    else:
+                        print(f"⚠️ [WEB-SYNC] Pengumuman channel tidak ditemukan atau role kosong!")
+
+                    # TANDAI SEBAGAI SUDAH DISINKRONISASI agar tidak diulang menit depan!
+                    try:
+                        await self.bot.pool.execute(
+                            "UPDATE users SET sync_discord = true WHERE discord_id = $1", 
+                            discord_id_str
+                        )
+                    except Exception as e:
+                        print(f"[DB ERROR] Gagal update sync_discord flag: {e}")
+
                     # 5. (Opsional) Sinkronisasi Nama Lengkap ke Nickname Discord
-                    full_name = record['full_name']
                     if full_name:
                         # Maksimal panjang nickname discord adalah 32 karakter
                         clean_name = full_name.title()[:32]
@@ -478,36 +541,6 @@ class AutoGate(commands.Cog):
                             print(f"[WARN] Gagal extract nama lengkap: {e}")
 
                         # === SIMPAN KE DATABASE (TERMASUK NAMA LENGKAP) ===
-                        # === EKSTRAKSI NAMA LENGKAP DARI SKL ===
-                        # Gunakan Gemini sekali lagi untuk extract nama lengkap
-                        nama_lengkap_skl = None
-                        try:
-                            prompt_nama = (
-                                "Dari teks berikut, ekstrak HANYA nama lengkap siswa/mahasiswa. "
-                                "Kembalikan HANYA nama lengkapnya saja, tanpa penjelasan lain.\n\n"
-                                f"Teks dokumen:\n{hasil_mentah}"
-                            )
-                            # Panggil Gemini text-only (tanpa gambar) untuk parsing nama
-                            await self.gemini_limiter.acquire()
-                            clean_key = gemini_key.strip()
-                            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={clean_key}"
-                            payload_nama = {
-                                "contents": [{"parts": [{"text": prompt_nama}]}]
-                            }
-                            async with aiohttp.ClientSession() as sess:
-                                async with sess.post(url, json=payload_nama) as resp_nama:
-                                    if resp_nama.status == 200:
-                                        data_nama = await resp_nama.json()
-                                        raw_nama = data_nama.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '').strip()
-                                        # Bersihkan: hapus tanda kutip, newline, dll
-                                        raw_nama = raw_nama.strip('"\'').strip()
-                                        if len(raw_nama) >= 3 and len(raw_nama) <= 100:
-                                            nama_lengkap_skl = raw_nama.title()  # Capitalize properly
-                                            print(f"📝 Nama lengkap SKL terdeteksi: {nama_lengkap_skl}")
-                        except Exception as e:
-                            print(f"[WARN] Gagal extract nama lengkap: {e}")
-
-                        # === SIMPAN KE DATABASE (TERMASUK NAMA LENGKAP) ===
                         try:
                             await self.bot.pool.execute(
                                 "INSERT INTO skl_registry (no_reg, username) VALUES ($1, $2) ON CONFLICT (no_reg) DO NOTHING",
@@ -540,7 +573,15 @@ class AutoGate(commands.Cog):
                         except Exception as e:
                             print(f"[DB ERROR] Gagal input ke database: {e}")
 
+
+                    else:
+                        print(f"⚠️ [DISCORD-UPLOAD] Welcome channel tidak ditemukan!")
+
                     pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
+                    if pengumuman_channel is None:
+                        try: pengumuman_channel = await self.bot.fetch_channel(self.pengumuman_id)
+                        except: pass
+                    
                     if pengumuman_channel:
                         embed_pengumuman = discord.Embed(
                             title="🎉 MAHASISWA BARU TELAH TIBA!",
@@ -548,7 +589,13 @@ class AutoGate(commands.Cog):
                             color=discord.Color.gold()
                         )
                         embed_pengumuman.set_thumbnail(url=message.author.display_avatar.url)
-                        await pengumuman_channel.send(embed=embed_pengumuman)
+                        try:
+                            await pengumuman_channel.send(embed=embed_pengumuman)
+                            print(f"✅ [DISCORD-UPLOAD] Berhasil mengirim pengumuman untuk {discord_username}")
+                        except Exception as e:
+                            print(f"❌ [DISCORD-UPLOAD] Gagal kirim pengumuman: {e}")
+                    else:
+                        print(f"⚠️ [DISCORD-UPLOAD] Pengumuman channel tidak ditemukan!")
 
                 else:
                     err_msg = await message.channel.send(
