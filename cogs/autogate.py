@@ -83,8 +83,16 @@ class AutoGate(commands.Cog):
                     username TEXT
                 )
             ''')
+            # (BARU) Tambahkan kolom sync_discord ke tabel users jika belum ada
+            try:
+                await self.bot.pool.execute('''
+                    ALTER TABLE users ADD COLUMN IF NOT EXISTS sync_discord BOOLEAN DEFAULT false
+                ''')
+            except Exception as e:
+                print(f"[DB WARN] Gagal alter table users (mungkin sudah ada atau bukan admin DB): {e}")
+
             self.is_ready = True
-            print("✅ Tabel Keamanan SKL (skl_registry) siap!")
+            print("✅ Tabel Keamanan SKL & Sync Discord siap!")
 
     # ==============================================================
     # FUNGSI SINKRONISASI VERIFIKASI DARI WEB KE DISCORD
@@ -101,11 +109,11 @@ class AutoGate(commands.Cog):
             return
 
         try:
-            # Cari user yang sudah verifikasi di web
+            # Cari user yang sudah verifikasi di web DAN belum pernah disinkronkan ke discord (sync_discord = false)
             records = await self.bot.pool.fetch("""
                 SELECT discord_id, prodi, full_name 
                 FROM users 
-                WHERE is_verified = true AND discord_id IS NOT NULL
+                WHERE is_verified = true AND sync_discord = false AND discord_id IS NOT NULL
             """)
 
             guild = self.bot.get_guild(self.guild_id)
@@ -157,57 +165,67 @@ class AutoGate(commands.Cog):
                             await member.add_roles(*roles_to_add)
                             role_names = ", ".join([r.name for r in roles_to_add])
                             print(f"🔄 Auto-Sync (Web->DC): Memberikan role [{role_names}] ke {member.name}")
-                            
-                            # (BARU) MASUKKAN KE TABEL maba_roles AGAR TERSIMPAN DI DATABASE BOT!
-                            if target_role_name:
-                                try:
-                                    await self.bot.pool.execute(
-                                        "INSERT INTO maba_roles (username, role_name, full_name) VALUES ($1, $2, $3) ON CONFLICT (username) DO UPDATE SET role_name = EXCLUDED.role_name, full_name = EXCLUDED.full_name",
-                                        member.name, target_role_name, full_name
-                                    )
-                                    print(f"🔄 Auto-Sync (Web->DC): Disimpan ke maba_roles untuk {member.name}")
-                                except Exception as e:
-                                    print(f"[DB ERROR] Gagal input ke maba_roles dari auto-sync: {e}")
-
-                            # Hapus Notifikasi 'HALT' di pos_satpam jika ada
-                            pos_satpam = self.bot.get_channel(self.pos_satpam_id)
-                            if pos_satpam:
-                                async for msg in pos_satpam.history(limit=50):
-                                    if msg.author == self.bot.user and member.mention in msg.content:
-                                        try:
-                                            await msg.delete()
-                                        except:
-                                            pass
-                            
-                            # Opsional: Kirim pesan selamat datang
-                            welcome_channel = self.bot.get_channel(self.welcome_center_id)
-                            nama_depan = member.display_name.split()[0]
-                            if welcome_channel and target_role_name:
-                                embed = discord.Embed(
-                                    title="🎓 Welcome to Telyu Jekardah!",
-                                    description=(
-                                        f"Helo welkam join Telyu Jekardah, kak **{nama_depan}**! {member.mention}\n\n"
-                                        f"Kamu telah berhasil **Verifikasi via Website** dan otomatis diberikan Role **{target_role_name}**! 🎉\n\n"
-                                        "👉 **Silakan langsung meluncur ke private room kelasmu di sebelah kiri!**"
-                                    ),
-                                    color=discord.Color.green()
-                                )
-                                embed.set_thumbnail(url=member.display_avatar.url)
-                                await welcome_channel.send(content=f"Cek di mari ngab!", embed=embed)
-                                
-                            # (BARU) Kirim notif ke pengumuman
-                            pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
-                            if pengumuman_channel and target_role_name:
-                                embed_pengumuman = discord.Embed(
-                                    title="🎉 MAHASISWA BARU TELAH TIBA!",
-                                    description=f"Mari sambut **{nama_depan}** ({member.mention}) dari prodi **{target_role_name}** yang baru aja lolos verifikasi gerbang utama via Web!\nSelamat bergabung di kampus, jangan lupa mampir ke kantin virtual!",
-                                    color=discord.Color.gold()
-                                )
-                                embed_pengumuman.set_thumbnail(url=member.display_avatar.url)
-                                await pengumuman_channel.send(embed=embed_pengumuman)
-
                         except discord.Forbidden:
                             print(f"⚠️ Missing permission to add roles to {member.name}")
+
+                    # 4.5. ALWAYS Send notification and save to maba_roles for newly verified web users
+                    # Kita taruh di luar if roles_to_add: supaya kalau admin tes dan sudah punya rolenya,
+                    # notifikasi TETAP jalan dan tersimpan.
+                    if target_role_name:
+                        try:
+                            await self.bot.pool.execute(
+                                "INSERT INTO maba_roles (username, role_name, full_name) VALUES ($1, $2, $3) ON CONFLICT (username) DO UPDATE SET role_name = EXCLUDED.role_name, full_name = EXCLUDED.full_name",
+                                member.name, target_role_name, full_name
+                            )
+                            print(f"🔄 Auto-Sync (Web->DC): Disimpan ke maba_roles untuk {member.name}")
+                        except Exception as e:
+                            print(f"[DB ERROR] Gagal input ke maba_roles dari auto-sync: {e}")
+
+                    # Hapus Notifikasi 'HALT' di pos_satpam jika ada
+                    pos_satpam = self.bot.get_channel(self.pos_satpam_id)
+                    if pos_satpam:
+                        async for msg in pos_satpam.history(limit=50):
+                            if msg.author == self.bot.user and member.mention in msg.content:
+                                try:
+                                    await msg.delete()
+                                except:
+                                    pass
+                    
+                    # Kirim pesan selamat datang
+                    welcome_channel = self.bot.get_channel(self.welcome_center_id)
+                    nama_depan = member.display_name.split()[0]
+                    if welcome_channel and target_role_name:
+                        embed = discord.Embed(
+                            title="🎓 Welcome to Telyu Jekardah!",
+                            description=(
+                                f"Helo welkam join Telyu Jekardah, kak **{nama_depan}**! {member.mention}\n\n"
+                                f"Kamu telah berhasil **Verifikasi via Website** dan otomatis diberikan Role **{target_role_name}**! 🎉\n\n"
+                                "👉 **Silakan langsung meluncur ke private room kelasmu di sebelah kiri!**"
+                            ),
+                            color=discord.Color.green()
+                        )
+                        embed.set_thumbnail(url=member.display_avatar.url)
+                        await welcome_channel.send(content=f"Cek di mari ngab!", embed=embed)
+                        
+                    # Kirim notif ke pengumuman
+                    pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
+                    if pengumuman_channel and target_role_name:
+                        embed_pengumuman = discord.Embed(
+                            title="🎉 MAHASISWA BARU TELAH TIBA!",
+                            description=f"Mari sambut **{nama_depan}** ({member.mention}) dari prodi **{target_role_name}** yang baru aja lolos verifikasi gerbang utama via Web!\nSelamat bergabung di kampus, jangan lupa mampir ke kantin virtual!",
+                            color=discord.Color.gold()
+                        )
+                        embed_pengumuman.set_thumbnail(url=member.display_avatar.url)
+                        await pengumuman_channel.send(embed=embed_pengumuman)
+
+                    # TANDAI SEBAGAI SUDAH DISINKRONISASI agar tidak diulang menit depan!
+                    try:
+                        await self.bot.pool.execute(
+                            "UPDATE users SET sync_discord = true WHERE discord_id = $1", 
+                            discord_id_str
+                        )
+                    except Exception as e:
+                        print(f"[DB ERROR] Gagal update sync_discord flag: {e}")
 
                     # 5. (Opsional) Sinkronisasi Nama Lengkap ke Nickname Discord
                     if full_name:
