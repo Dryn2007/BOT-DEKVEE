@@ -193,6 +193,10 @@ class AutoGate(commands.Cog):
                     
                     # Kirim pesan selamat datang
                     welcome_channel = self.bot.get_channel(self.welcome_center_id)
+                    if welcome_channel is None:
+                        try: welcome_channel = await self.bot.fetch_channel(self.welcome_center_id)
+                        except: pass
+                    
                     nama_depan = member.display_name.split()[0]
                     if welcome_channel and target_role_name:
                         embed = discord.Embed(
@@ -205,10 +209,20 @@ class AutoGate(commands.Cog):
                             color=discord.Color.green()
                         )
                         embed.set_thumbnail(url=member.display_avatar.url)
-                        await welcome_channel.send(content=f"Cek di mari ngab!", embed=embed)
+                        try:
+                            await welcome_channel.send(content=f"Cek di mari ngab!", embed=embed)
+                            print(f"✅ [WEB-SYNC] Berhasil mengirim welcome msg untuk {member.name}")
+                        except Exception as e:
+                            print(f"❌ [WEB-SYNC] Gagal kirim welcome msg: {e}")
+                    else:
+                        print(f"⚠️ [WEB-SYNC] Welcome channel tidak ditemukan atau role kosong!")
                         
                     # Kirim notif ke pengumuman
                     pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
+                    if pengumuman_channel is None:
+                        try: pengumuman_channel = await self.bot.fetch_channel(self.pengumuman_id)
+                        except: pass
+                    
                     if pengumuman_channel and target_role_name:
                         embed_pengumuman = discord.Embed(
                             title="🎉 MAHASISWA BARU TELAH TIBA!",
@@ -216,7 +230,13 @@ class AutoGate(commands.Cog):
                             color=discord.Color.gold()
                         )
                         embed_pengumuman.set_thumbnail(url=member.display_avatar.url)
-                        await pengumuman_channel.send(embed=embed_pengumuman)
+                        try:
+                            await pengumuman_channel.send(embed=embed_pengumuman)
+                            print(f"✅ [WEB-SYNC] Berhasil mengirim pengumuman untuk {member.name}")
+                        except Exception as e:
+                            print(f"❌ [WEB-SYNC] Gagal kirim pengumuman: {e}")
+                    else:
+                        print(f"⚠️ [WEB-SYNC] Pengumuman channel tidak ditemukan atau role kosong!")
 
                     # TANDAI SEBAGAI SUDAH DISINKRONISASI agar tidak diulang menit depan!
                     try:
@@ -579,6 +599,10 @@ class AutoGate(commands.Cog):
                             print(f"[DB ERROR] Gagal input ke database: {e}")
 
                     welcome_channel = self.bot.get_channel(self.welcome_center_id)
+                    if welcome_channel is None:
+                        try: welcome_channel = await self.bot.fetch_channel(self.welcome_center_id)
+                        except: pass
+                    
                     if welcome_channel:
                         embed = discord.Embed(
                             title="🎓 Welcome to Telyu Jekardah!",
@@ -590,9 +614,19 @@ class AutoGate(commands.Cog):
                             color=discord.Color.green()
                         )
                         embed.set_thumbnail(url=message.author.display_avatar.url)
-                        await welcome_channel.send(content=f"Cek di mari ngab **{nama_depan}**!", embed=embed)
+                        try:
+                            await welcome_channel.send(content=f"Cek di mari ngab **{nama_depan}**!", embed=embed)
+                            print(f"✅ [DISCORD-UPLOAD] Berhasil mengirim welcome msg untuk {discord_username}")
+                        except Exception as e:
+                            print(f"❌ [DISCORD-UPLOAD] Gagal kirim welcome msg: {e}")
+                    else:
+                        print(f"⚠️ [DISCORD-UPLOAD] Welcome channel tidak ditemukan!")
 
                     pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
+                    if pengumuman_channel is None:
+                        try: pengumuman_channel = await self.bot.fetch_channel(self.pengumuman_id)
+                        except: pass
+                    
                     if pengumuman_channel:
                         embed_pengumuman = discord.Embed(
                             title="🎉 MAHASISWA BARU TELAH TIBA!",
@@ -600,7 +634,13 @@ class AutoGate(commands.Cog):
                             color=discord.Color.gold()
                         )
                         embed_pengumuman.set_thumbnail(url=message.author.display_avatar.url)
-                        await pengumuman_channel.send(embed=embed_pengumuman)
+                        try:
+                            await pengumuman_channel.send(embed=embed_pengumuman)
+                            print(f"✅ [DISCORD-UPLOAD] Berhasil mengirim pengumuman untuk {discord_username}")
+                        except Exception as e:
+                            print(f"❌ [DISCORD-UPLOAD] Gagal kirim pengumuman: {e}")
+                    else:
+                        print(f"⚠️ [DISCORD-UPLOAD] Pengumuman channel tidak ditemukan!")
 
                 else:
                     err_msg = await message.channel.send(
