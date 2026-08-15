@@ -149,6 +149,8 @@ class AutoGate(commands.Cog):
                     if target_role and not has_prodi_role:
                         roles_to_add.append(target_role)
 
+                    full_name = record['full_name']
+
                     # 4. Berikan role (jika ada yang kurang)
                     if roles_to_add:
                         try:
@@ -156,13 +158,35 @@ class AutoGate(commands.Cog):
                             role_names = ", ".join([r.name for r in roles_to_add])
                             print(f"🔄 Auto-Sync (Web->DC): Memberikan role [{role_names}] ke {member.name}")
                             
+                            # (BARU) MASUKKAN KE TABEL maba_roles AGAR TERSIMPAN DI DATABASE BOT!
+                            if target_role_name:
+                                try:
+                                    await self.bot.pool.execute(
+                                        "INSERT INTO maba_roles (username, role_name, full_name) VALUES ($1, $2, $3) ON CONFLICT (username) DO UPDATE SET role_name = EXCLUDED.role_name, full_name = EXCLUDED.full_name",
+                                        member.name, target_role_name, full_name
+                                    )
+                                    print(f"🔄 Auto-Sync (Web->DC): Disimpan ke maba_roles untuk {member.name}")
+                                except Exception as e:
+                                    print(f"[DB ERROR] Gagal input ke maba_roles dari auto-sync: {e}")
+
+                            # Hapus Notifikasi 'HALT' di pos_satpam jika ada
+                            pos_satpam = self.bot.get_channel(self.pos_satpam_id)
+                            if pos_satpam:
+                                async for msg in pos_satpam.history(limit=50):
+                                    if msg.author == self.bot.user and member.mention in msg.content:
+                                        try:
+                                            await msg.delete()
+                                        except:
+                                            pass
+                            
                             # Opsional: Kirim pesan selamat datang
                             welcome_channel = self.bot.get_channel(self.welcome_center_id)
+                            nama_depan = member.display_name.split()[0]
                             if welcome_channel and target_role_name:
                                 embed = discord.Embed(
                                     title="🎓 Welcome to Telyu Jekardah!",
                                     description=(
-                                        f"Helo welkam join Telyu Jekardah, kak **{member.display_name}**! {member.mention}\n\n"
+                                        f"Helo welkam join Telyu Jekardah, kak **{nama_depan}**! {member.mention}\n\n"
                                         f"Kamu telah berhasil **Verifikasi via Website** dan otomatis diberikan Role **{target_role_name}**! 🎉\n\n"
                                         "👉 **Silakan langsung meluncur ke private room kelasmu di sebelah kiri!**"
                                     ),
@@ -171,11 +195,21 @@ class AutoGate(commands.Cog):
                                 embed.set_thumbnail(url=member.display_avatar.url)
                                 await welcome_channel.send(content=f"Cek di mari ngab!", embed=embed)
                                 
+                            # (BARU) Kirim notif ke pengumuman
+                            pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
+                            if pengumuman_channel and target_role_name:
+                                embed_pengumuman = discord.Embed(
+                                    title="🎉 MAHASISWA BARU TELAH TIBA!",
+                                    description=f"Mari sambut **{nama_depan}** ({member.mention}) dari prodi **{target_role_name}** yang baru aja lolos verifikasi gerbang utama via Web!\nSelamat bergabung di kampus, jangan lupa mampir ke kantin virtual!",
+                                    color=discord.Color.gold()
+                                )
+                                embed_pengumuman.set_thumbnail(url=member.display_avatar.url)
+                                await pengumuman_channel.send(embed=embed_pengumuman)
+
                         except discord.Forbidden:
                             print(f"⚠️ Missing permission to add roles to {member.name}")
 
                     # 5. (Opsional) Sinkronisasi Nama Lengkap ke Nickname Discord
-                    full_name = record['full_name']
                     if full_name:
                         # Maksimal panjang nickname discord adalah 32 karakter
                         clean_name = full_name.title()[:32]
@@ -494,36 +528,6 @@ class AutoGate(commands.Cog):
                             print(f"[WARN] Gagal extract nama lengkap: {e}")
 
                         # === SIMPAN KE DATABASE (TERMASUK NAMA LENGKAP) ===
-                        # === EKSTRAKSI NAMA LENGKAP DARI SKL ===
-                        # Gunakan Gemini sekali lagi untuk extract nama lengkap
-                        nama_lengkap_skl = None
-                        try:
-                            prompt_nama = (
-                                "Dari teks berikut, ekstrak HANYA nama lengkap siswa/mahasiswa. "
-                                "Kembalikan HANYA nama lengkapnya saja, tanpa penjelasan lain.\n\n"
-                                f"Teks dokumen:\n{hasil_mentah}"
-                            )
-                            # Panggil Gemini text-only (tanpa gambar) untuk parsing nama
-                            await self.gemini_limiter.acquire()
-                            clean_key = gemini_key.strip()
-                            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={clean_key}"
-                            payload_nama = {
-                                "contents": [{"parts": [{"text": prompt_nama}]}]
-                            }
-                            async with aiohttp.ClientSession() as sess:
-                                async with sess.post(url, json=payload_nama) as resp_nama:
-                                    if resp_nama.status == 200:
-                                        data_nama = await resp_nama.json()
-                                        raw_nama = data_nama.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '').strip()
-                                        # Bersihkan: hapus tanda kutip, newline, dll
-                                        raw_nama = raw_nama.strip('"\'').strip()
-                                        if len(raw_nama) >= 3 and len(raw_nama) <= 100:
-                                            nama_lengkap_skl = raw_nama.title()  # Capitalize properly
-                                            print(f"📝 Nama lengkap SKL terdeteksi: {nama_lengkap_skl}")
-                        except Exception as e:
-                            print(f"[WARN] Gagal extract nama lengkap: {e}")
-
-                        # === SIMPAN KE DATABASE (TERMASUK NAMA LENGKAP) ===
                         try:
                             await self.bot.pool.execute(
                                 "INSERT INTO skl_registry (no_reg, username) VALUES ($1, $2) ON CONFLICT (no_reg) DO NOTHING",
@@ -622,4 +626,3 @@ class AutoGate(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(AutoGate(bot))
-
