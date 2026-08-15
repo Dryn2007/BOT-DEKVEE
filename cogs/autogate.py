@@ -530,7 +530,7 @@ class AutoGate(commands.Cog):
                                 no_reg, discord_username
                             )
                             await self.bot.pool.execute(
-                                "INSERT INTO maba_roles (username, role_name, full_name) VALUES ($1, $2, $3)",
+                                "INSERT INTO maba_roles (username, role_name, full_name) VALUES ($1, $2, $3) ON CONFLICT (username) DO UPDATE SET role_name = EXCLUDED.role_name, full_name = EXCLUDED.full_name",
                                 discord_username, role_target_name, nama_lengkap_skl
                             )
                             
@@ -552,8 +552,6 @@ class AutoGate(commands.Cog):
                                 WHERE discord_id = $3
                                 """,
                                 web_prodi, nama_lengkap_skl, discord_id_str
-                                "INSERT INTO maba_roles (username, role_name, full_name) VALUES ($1, $2, $3) ON CONFLICT (username) DO UPDATE SET role_name = EXCLUDED.role_name, full_name = EXCLUDED.full_name",
-                                discord_username, role_target_name, nama_lengkap_skl
                             )
                         except Exception as e:
                             print(f"[DB ERROR] Gagal input ke database: {e}")
