@@ -168,8 +168,6 @@ class AutoGate(commands.Cog):
                             print(f"⚠️ Missing permission to add roles to {member.name}")
 
                     # 4.5. ALWAYS Send notification and save to maba_roles for newly verified web users
-                    # Kita taruh di luar if roles_to_add: supaya kalau admin tes dan sudah punya rolenya,
-                    # notifikasi TETAP jalan dan tersimpan.
                     if target_role_name:
                         try:
                             await self.bot.pool.execute(
@@ -189,8 +187,6 @@ class AutoGate(commands.Cog):
                                     await msg.delete()
                                 except:
                                     pass
-                    
-
                         
                     # Kirim notif ke pengumuman
                     pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
@@ -201,7 +197,7 @@ class AutoGate(commands.Cog):
                     if pengumuman_channel and target_role_name:
                         embed_pengumuman = discord.Embed(
                             title="🎉 MAHASISWA BARU TELAH TIBA!",
-                            description=f"Mari sambut **{nama_depan}** ({member.mention}) dari prodi **{target_role_name}** yang baru aja lolos verifikasi gerbang utama via Web!\nSelamat bergabung di kampus, jangan lupa mampir ke kantin virtual!",
+                            description=f"Mari sambut **{full_name.split()[0] if full_name else member.display_name}** ({member.mention}) dari prodi **{target_role_name}** yang baru aja lolos verifikasi gerbang utama via Web!\nSelamat bergabung di kampus, jangan lupa mampir ke kantin virtual!",
                             color=discord.Color.gold()
                         )
                         embed_pengumuman.set_thumbnail(url=member.display_avatar.url)
@@ -231,7 +227,7 @@ class AutoGate(commands.Cog):
                                 await member.edit(nick=clean_name)
                                 print(f"🔄 Auto-Sync (Web->DC): Mengubah nama {member.name} menjadi {clean_name}")
                             except discord.Forbidden:
-                                pass # Abaikan jika bot tidak punya izin ganti nama member ini (misal role member lebih tinggi dari bot)
+                                pass # Abaikan jika bot tidak punya izin ganti nama
 
                 except ValueError:
                     pass # discord_id bukan angka
@@ -242,8 +238,6 @@ class AutoGate(commands.Cog):
     @sync_web_verification.before_loop
     async def before_sync(self):
         await self.bot.wait_until_ready()
-
-            # FITUR CATCH UP DIHAPUS DARI SINI AGAR TIDAK SPAM SAAT RESTART
 
     async def panggil_gemini_api(self, prompt, image_data, mime_type):
         if not gemini_key:
@@ -470,7 +464,7 @@ class AutoGate(commands.Cog):
                 syarat_kampus = "jakarta" in teks or "telkom university" in teks
                 syarat_tahun = "2026" in teks
 
-                                # Mapping lebih lengkap & tanpa kata "informasi" untuk menghindari tabrakan
+                # Mapping lebih lengkap & tanpa kata "informasi" untuk menghindari tabrakan
                 role_mapping = {
                     "dkv": "DKV",
                     "desain komunikasi visual": "DKV",
@@ -495,7 +489,6 @@ class AutoGate(commands.Cog):
                     "tektel": "TEKTEL",
                     "tt": "TEKTEL",
                 }
-
 
                 prodi_terdeteksi = None
                 role_target_name = None
@@ -588,9 +581,8 @@ class AutoGate(commands.Cog):
                         except Exception as e:
                             print(f"[DB ERROR] Gagal input ke database: {e}")
 
-
                     else:
-                        print(f"⚠️ [DISCORD-UPLOAD] Welcome channel tidak ditemukan!")
+                        print(f"⚠️ [DISCORD-UPLOAD] Role prodi {role_target_name} tidak ditemukan di server!")
 
                     pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
                     if pengumuman_channel is None:
@@ -638,7 +630,6 @@ class AutoGate(commands.Cog):
         # Mengirim notifikasi ke channel pengumuman (bisa diubah ke channel lain jika mau)
         pengumuman_channel = self.bot.get_channel(self.pengumuman_id)
 
-
         if pengumuman_channel:
             embed_leave = discord.Embed(
                 title="👋 Seseorang Telah Pergi...",
@@ -647,10 +638,10 @@ class AutoGate(commands.Cog):
             )
             embed_leave.set_thumbnail(url=member.display_avatar.url)
 
-
             await pengumuman_channel.send(embed=embed_leave)
             print(f"Member keluar: {member.name}")
 
 
 async def setup(bot):
     await bot.add_cog(AutoGate(bot))
+
