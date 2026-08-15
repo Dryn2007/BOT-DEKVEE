@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import aiohttp
 import os
 import base64
@@ -10,7 +10,6 @@ from collections import deque
 
 # Ambil API key dari .env
 gemini_key = os.getenv("GEMINI_API_KEY")
-
 
 # ==========================================
 # 1. RATE LIMITER (SLIDING WINDOW)
@@ -58,6 +57,9 @@ class AutoGate(commands.Cog):
         self.pos_satpam_id = 1526900951678587013
         self.welcome_center_id = 1526567698627035246
         self.pengumuman_id = 1526219303714820186
+        
+        # ID Server (Guild ID)
+        self.guild_id = 1522059025485664326 
 
         self.warned_users = set()
         self.is_ready = False
@@ -65,6 +67,12 @@ class AutoGate(commands.Cog):
         # Batasi ke 12 RPM (bukan 15) sebagai safety margin,
         # supaya nggak mepet banget ke limit resmi Google (Free Tier = 15 RPM)
         self.gemini_limiter = RateLimiter(max_calls=12, period=60.0)
+        
+        # Mulai background task untuk sinkronisasi Web -> Discord
+        self.sync_web_verification.start()
+
+    def cog_unload(self):
+        self.sync_web_verification.cancel()
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -78,7 +86,115 @@ class AutoGate(commands.Cog):
             self.is_ready = True
             print("✅ Tabel Keamanan SKL (skl_registry) siap!")
 
-            # FITUR CATCH UP DIHAPUS DARI SINI AGAR TIDAK SPAM SAAT RESTART
+    # ==============================================================
+    # FUNGSI SINKRONISASI VERIFIKASI DARI WEB KE DISCORD
+    # ==============================================================
+    @tasks.loop(minutes=1.0)
+    async def sync_web_verification(self):
+        """
+        Background task yang berjalan setiap 1 menit.
+        Mengecek tabel `users` dari website, jika is_verified = true,
+        maka otomatis memberikan role di Discord (jika belum punya).
+        """
+        # Tunggu sampai bot benar-benar siap dan pool DB tersedia
+        if not self.is_ready or not hasattr(self.bot, 'pool'):
+            return
+
+        try:
+            # Cari user yang sudah verifikasi di web
+            records = await self.bot.pool.fetch("""
+                SELECT discord_id, prodi, full_name 
+                FROM users 
+                WHERE is_verified = true AND discord_id IS NOT NULL
+            """)
+
+            guild = self.bot.get_guild(self.guild_id)
+            if not guild:
+                return
+
+            role_member = discord.utils.get(guild.roles, name="MEMBER")
+
+            # Mapping nama prodi di Web -> nama role di Discord
+            role_mapping = {
+                "Desain Komunikasi Visual": "DKV",
+                "Teknik Informasi": "TEKINFO",
+                "Sistem Informasi": "SISFOR",
+                "Teknik Telekomunikasi": "TEKTEL",
+                "Umum": None # Kalau belum pilih kelas/prodi, minimal dapat MEMBER
+            }
+
+            for record in records:
+                discord_id_str = record['discord_id']
+                try:
+                    member_id = int(discord_id_str)
+                    member = guild.get_member(member_id)
+                    
+                    if not member:
+                        continue # Member sedang tidak ada di server / cache
+
+                    # 1. Cek apakah sudah punya role MEMBER
+                    has_member_role = role_member in member.roles if role_member else False
+                    
+                    # 2. Tentukan target role prodi berdasarkan data Web
+                    web_prodi = record['prodi']
+                    target_role_name = role_mapping.get(web_prodi)
+                    
+                    target_role = discord.utils.get(guild.roles, name=target_role_name) if target_role_name else None
+                    has_prodi_role = target_role in member.roles if target_role else False
+
+                    # 3. Kumpulkan role yang harus ditambahkan
+                    roles_to_add = []
+                    if role_member and not has_member_role:
+                        roles_to_add.append(role_member)
+                    if target_role and not has_prodi_role:
+                        roles_to_add.append(target_role)
+
+                    # 4. Berikan role (jika ada yang kurang)
+                    if roles_to_add:
+                        try:
+                            await member.add_roles(*roles_to_add)
+                            role_names = ", ".join([r.name for r in roles_to_add])
+                            print(f"🔄 Auto-Sync (Web->DC): Memberikan role [{role_names}] ke {member.name}")
+                            
+                            # Opsional: Kirim pesan selamat datang
+                            welcome_channel = self.bot.get_channel(self.welcome_center_id)
+                            if welcome_channel and target_role_name:
+                                embed = discord.Embed(
+                                    title="🎓 Welcome to Telyu Jekardah!",
+                                    description=(
+                                        f"Helo welkam join Telyu Jekardah, kak **{member.display_name}**! {member.mention}\n\n"
+                                        f"Kamu telah berhasil **Verifikasi via Website** dan otomatis diberikan Role **{target_role_name}**! 🎉\n\n"
+                                        "👉 **Silakan langsung meluncur ke private room kelasmu di sebelah kiri!**"
+                                    ),
+                                    color=discord.Color.green()
+                                )
+                                embed.set_thumbnail(url=member.display_avatar.url)
+                                await welcome_channel.send(content=f"Cek di mari ngab!", embed=embed)
+                                
+                        except discord.Forbidden:
+                            print(f"⚠️ Missing permission to add roles to {member.name}")
+
+                    # 5. (Opsional) Sinkronisasi Nama Lengkap ke Nickname Discord
+                    full_name = record['full_name']
+                    if full_name:
+                        # Maksimal panjang nickname discord adalah 32 karakter
+                        clean_name = full_name.title()[:32]
+                        if member.display_name != clean_name and member.id != guild.owner_id:
+                            try:
+                                await member.edit(nick=clean_name)
+                                print(f"🔄 Auto-Sync (Web->DC): Mengubah nama {member.name} menjadi {clean_name}")
+                            except discord.Forbidden:
+                                pass # Abaikan jika bot tidak punya izin ganti nama member ini (misal role member lebih tinggi dari bot)
+
+                except ValueError:
+                    pass # discord_id bukan angka
+
+        except Exception as e:
+            print(f"❌ Error in sync_web_verification loop: {e}")
+
+    @sync_web_verification.before_loop
+    async def before_sync(self):
+        await self.bot.wait_until_ready()
 
     async def panggil_gemini_api(self, prompt, image_data, mime_type):
         if not gemini_key:
@@ -156,6 +272,7 @@ class AutoGate(commands.Cog):
                 content=(
                     f"🚨 **HALT!** {sapaan}, {member.mention}!\n\n"
                     f"Untuk masuk, **upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
+                    f"Atau verifikasi lebih cepat melalui **Website Resmi Telyu Jekardah!**\n"
                     f"⚠️ **PENTING:** Pastikan **Nama Lengkap, Nomor Registrasi (11 Angka), Prodi, Kampus Jakarta**, dan tahun **2026/2027** terlihat dengan jelas ya!\n\n"
                     f"📄 **Link Drive di bawah ini CUMA buat LIHAT CONTOH format SKL yang valid, BUKAN tempat upload ya:**\n"
                     f"https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing\n\n"
@@ -170,6 +287,7 @@ class AutoGate(commands.Cog):
             content=(
                 f"🚨 **HALT!** {sapaan}, {member.mention}!\n\n"
                 f"Untuk masuk, **upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
+                f"Atau verifikasi lebih cepat melalui **Website Resmi Telyu Jekardah!**\n"
                 f"⚠️ **PENTING:** Pastikan **Nama Lengkap, Nomor Registrasi (11 Angka), Prodi, Kampus Jakarta**, dan tahun **2026/2027** terlihat dengan jelas ya!\n\n"
                 f"📄 **Link Drive di bawah ini CUMA buat LIHAT CONTOH format SKL yang valid, BUKAN tempat upload ya:**\n"
                 f"https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing\n\n"
@@ -383,6 +501,26 @@ class AutoGate(commands.Cog):
                                 "INSERT INTO maba_roles (username, role_name, full_name) VALUES ($1, $2, $3)",
                                 discord_username, role_target_name, nama_lengkap_skl
                             )
+                            
+                            # (BARU) Simpan ke tabel 'users' web juga agar sinkron dua arah jika perlu!
+                            # Update tabel users dengan discord_id
+                            discord_id_str = str(message.author.id)
+                            prodi_web_mapping = {
+                                "DKV": "Desain Komunikasi Visual",
+                                "TEKINFO": "Teknik Informasi",
+                                "SISFOR": "Sistem Informasi",
+                                "TEKTEL": "Teknik Telekomunikasi"
+                            }
+                            web_prodi = prodi_web_mapping.get(role_target_name, "Umum")
+                            
+                            await self.bot.pool.execute(
+                                """
+                                UPDATE users 
+                                SET is_verified = true, prodi = $1, full_name = $2 
+                                WHERE discord_id = $3
+                                """,
+                                web_prodi, nama_lengkap_skl, discord_id_str
+                            )
                         except Exception as e:
                             print(f"[DB ERROR] Gagal input ke database: {e}")
 
@@ -450,3 +588,4 @@ class AutoGate(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(AutoGate(bot))
+
