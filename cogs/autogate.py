@@ -470,17 +470,32 @@ class AutoGate(commands.Cog):
                 syarat_kampus = "jakarta" in teks or "telkom university" in teks
                 syarat_tahun = "2026" in teks
 
+                                # Mapping lebih lengkap & tanpa kata "informasi" untuk menghindari tabrakan
                 role_mapping = {
                     "dkv": "DKV",
                     "desain komunikasi visual": "DKV",
-                    "teknologi informasi": "TEKINFO",
+                    "s1 desain komunikasi visual": "DKV",
+                    
+                    "teknik informasi": "TEKINFO",
+                    "s1 teknik informasi": "TEKINFO",
+                    "ti": "TEKINFO",
+                    "informatika": "TEKINFO",
+                    "teknik informatika": "TEKINFO",
+                    "s1 informatika": "TEKINFO",
                     "tekinfo": "TEKINFO",
+                    
                     "sistem informasi": "SISFOR",
+                    "s1 sistem informasi": "SISFOR",
+                    "si": "SISFOR",
                     "sisfor": "SISFOR",
-                    "telekomunikasi": "TEKTEL",
+                    
                     "teknik telekomunikasi": "TEKTEL",
-                    "tektel": "TEKTEL"
+                    "s1 teknik telekomunikasi": "TEKTEL",
+                    "telekomunikasi": "TEKTEL",
+                    "tektel": "TEKTEL",
+                    "tt": "TEKTEL",
                 }
+
 
                 prodi_terdeteksi = None
                 role_target_name = None
