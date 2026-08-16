@@ -124,7 +124,8 @@ class AutoGate(commands.Cog):
             # Mapping nama prodi di Web -> nama role di Discord
             role_mapping = {
                 "Desain Komunikasi Visual": "DKV",
-                "Teknik Informasi": "TEKINFO",
+                "Teknologi Informasi": "TI",
+                "Informatika": "INFOR",
                 "Sistem Informasi": "SISFOR",
                 "Teknik Telekomunikasi": "TEKTEL",
                 "Umum": None # Kalau belum pilih kelas/prodi, minimal dapat MEMBER
@@ -470,13 +471,14 @@ class AutoGate(commands.Cog):
                     "desain komunikasi visual": "DKV",
                     "s1 desain komunikasi visual": "DKV",
                     
-                    "teknik informasi": "TEKINFO",
-                    "s1 teknik informasi": "TEKINFO",
-                    "ti": "TEKINFO",
-                    "informatika": "TEKINFO",
-                    "teknik informatika": "TEKINFO",
-                    "s1 informatika": "TEKINFO",
-                    "tekinfo": "TEKINFO",
+                    "teknologi informasi": "TI",
+                    "s1 teknologi informasi": "TI",
+                    "ti": "TI",
+                    
+                    "informatika": "INFOR",
+                    "s1 informatika": "INFOR",
+                    "teknik informatika": "INFOR",
+                    "if": "INFOR",
                     
                     "sistem informasi": "SISFOR",
                     "s1 sistem informasi": "SISFOR",
@@ -564,7 +566,8 @@ class AutoGate(commands.Cog):
                             discord_id_str = str(message.author.id)
                             prodi_web_mapping = {
                                 "DKV": "Desain Komunikasi Visual",
-                                "TEKINFO": "Teknik Informasi",
+                                "TI": "Teknologi Informasi",
+                                "INFOR": "Informatika",
                                 "SISFOR": "Sistem Informasi",
                                 "TEKTEL": "Teknik Telekomunikasi"
                             }
@@ -644,4 +647,3 @@ class AutoGate(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(AutoGate(bot))
-
