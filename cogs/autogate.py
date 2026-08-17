@@ -397,15 +397,17 @@ class AutoGate(commands.Cog):
                 except Exception as e:
                     print(f"[DB ERROR] Gagal update sync_discord flag: {e}")
 
-                # --- (Opsional) Sinkronisasi Nama Lengkap ke Nickname Discord ---
-                if full_name:
-                    clean_name = full_name.title()[:32]  # max nickname Discord = 32 char
-                    if member.display_name != clean_name and member.id != guild.owner_id:
-                        try:
-                            await member.edit(nick=clean_name)
-                            print(f"🔄 [WEB-SYNC] Mengubah nama {member.name} menjadi {clean_name}")
-                        except discord.Forbidden:
-                            pass  # Abaikan jika bot tidak punya izin ganti nama
+                # =========================================================================
+                # SINKRONISASI NAMA DI-DISABLED BERDASARKAN PERMINTAAN!
+                # =========================================================================
+                # if full_name:
+                #     clean_name = full_name.title()[:32]  # max nickname Discord = 32 char
+                #     if member.display_name != clean_name and member.id != guild.owner_id:
+                #         try:
+                #             await member.edit(nick=clean_name)
+                #             print(f"🔄 [WEB-SYNC] Mengubah nama {member.name} menjadi {clean_name}")
+                #         except discord.Forbidden:
+                #             pass  # Abaikan jika bot tidak punya izin ganti nama
 
         except Exception as e:
             print(f"❌ Error in sync_web_verification loop: {e}")
