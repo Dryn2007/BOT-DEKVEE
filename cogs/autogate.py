@@ -70,6 +70,7 @@ WEB_PRODI_TO_ROLE = {
 ROLE_TO_WEB_PRODI = {v: k for k, v in WEB_PRODI_TO_ROLE.items() if v}
 
 
+<<<<<<< HEAD
 # ==========================================
 # 0b. KONFIGURASI ROLE KELAS (dari website)
 # ==========================================
@@ -95,6 +96,8 @@ CLASS_ROLE_DEFAULT_COLOR = 0x99AAB5  # abu Discord — penanda prodi belum dipet
 KELAS_RE = re.compile(r'^JS1[A-Z]{2,5}-\d{2}-REG-[A-Z0-9]{1,10}$')
 
 
+=======
+>>>>>>> 48e99c6826155d6e530f6b331a82989245ea1a8a
 def resolve_prodi(teks: str):
     """
     Cari prodi dari teks OCR pakai word-boundary matching.
@@ -382,6 +385,80 @@ class AutoGate(commands.Cog):
             return to_add, f"Sebagian role belum terkonfigurasi: {', '.join(missing)}"
         return to_add, None
 
+    # ==============================================================
+    # HELPER ROLE — semua pencarian role lewat sini
+    # ==============================================================
+    def get_role(self, guild: discord.Guild, role_key: str):
+        """
+        Ambil role dari ROLE_IDS by ID. Return None + log jelas kalau gagal,
+        supaya penyebabnya kelihatan di console dan bukan silent-fail.
+        """
+        role_id = ROLE_IDS.get(role_key)
+        if role_id is None:
+            print(f"⚠️ [ROLE] '{role_key}' belum diisi ID-nya di ROLE_IDS. Dilewati.")
+            return None
+
+        role = guild.get_role(role_id)
+        if role is None:
+            print(f"❌ [ROLE] '{role_key}' (ID {role_id}) tidak ada di server "
+                  f"'{guild.name}'. Role terhapus atau ID salah?")
+            return None
+        return role
+
+    async def assign_roles(self, member: discord.Member, role_keys):
+        """
+        Tambahkan role ke member dengan penanganan error eksplisit.
+
+        Return: (list_role_berhasil, pesan_error_atau_None)
+
+        Kenapa ini penting: `await member.add_roles(x)` yang gagal karena
+        hierarki akan melempar discord.Forbidden. Di kode lama exception itu
+        kabur ke `except Exception` paling luar dan cuma muncul sebagai
+        "sistem pusing", jadi penyebab aslinya nggak pernah kelihatan.
+        """
+        guild = member.guild
+        to_add = []
+        missing = []
+
+        for key in role_keys:
+            role = self.get_role(guild, key)
+            if role is None:
+                missing.append(key)
+                continue
+            if role in member.roles:
+                continue  # sudah punya, skip
+            to_add.append(role)
+
+        if not to_add:
+            if missing:
+                return [], f"Role belum terkonfigurasi: {', '.join(missing)}"
+            return [], None
+
+        # Cek hierarki dulu supaya errornya informatif, bukan Forbidden mentah
+        me = guild.me
+        if me is None or not me.guild_permissions.manage_roles:
+            return [], "Bot tidak punya permission **Manage Roles**."
+
+        too_high = [r.name for r in to_add if r >= me.top_role]
+        if too_high:
+            return [], (f"Role {', '.join(too_high)} posisinya **di atas** role bot "
+                        f"('{me.top_role.name}') di Server Settings → Roles. "
+                        f"Geser role bot ke paling atas.")
+
+        try:
+            await member.add_roles(*to_add, reason="AutoGate: verifikasi SKL")
+        except discord.Forbidden:
+            return [], "Bot ditolak Discord (Forbidden) saat menambah role."
+        except discord.HTTPException as e:
+            return [], f"Discord API error saat menambah role: {e}"
+
+        granted = [r.name for r in to_add]
+        print(f"✅ [ROLE] Diberikan [{', '.join(granted)}] ke {member.name}")
+
+        if missing:
+            return to_add, f"Sebagian role belum terkonfigurasi: {', '.join(missing)}"
+        return to_add, None
+
     @commands.Cog.listener()
     async def on_ready(self):
         if not self.is_ready:
@@ -393,6 +470,7 @@ class AutoGate(commands.Cog):
                 )
             ''')
 
+<<<<<<< HEAD
             # Tabel yang sudah ada duluan belum punya kolom discord_id.
             # no_reg diikat ke Discord ID, bukan username: username Discord
             # bisa diganti kapan saja dan bikin pengecekan pemilik meleset.
@@ -403,6 +481,8 @@ class AutoGate(commands.Cog):
             except Exception as e:
                 print(f"[DB WARN] Gagal alter table skl_registry: {e}")
 
+=======
+>>>>>>> 48e99c6826155d6e530f6b331a82989245ea1a8a
             # Tambahkan kolom sync_discord ke tabel users jika belum ada
             try:
                 await self.bot.pool.execute('''
@@ -428,6 +508,46 @@ class AutoGate(commands.Cog):
                 for key in ROLE_IDS:
                     self.get_role(guild, key)
 
+<<<<<<< HEAD
+=======
+    # ==============================================================
+    # COMMAND DIAGNOSA — jalankan ini kalau role masih nggak masuk
+    # ==============================================================
+    @commands.command(name="cekrole")
+    @commands.has_permissions(administrator=True)
+    async def cekrole(self, ctx):
+        """Laporan kesehatan konfigurasi role + hierarki bot."""
+        guild = ctx.guild
+        me = guild.me
+
+        lines = []
+        can_manage = me.guild_permissions.manage_roles
+        lines.append(f"{'✅' if can_manage else '❌'} Permission **Manage Roles**: {can_manage}")
+        lines.append(f"📍 Role tertinggi bot: **{me.top_role.name}** (posisi {me.top_role.position})")
+        lines.append("")
+
+        for key, rid in ROLE_IDS.items():
+            if rid is None:
+                lines.append(f"⚠️ `{key}` — ID belum diisi di ROLE_IDS")
+                continue
+            role = guild.get_role(rid)
+            if role is None:
+                lines.append(f"❌ `{key}` — ID `{rid}` tidak ditemukan di server")
+            elif role >= me.top_role:
+                lines.append(f"🔒 `{key}` — **{role.name}** ada, tapi posisinya "
+                             f"({role.position}) di atas/sama dengan role bot → bot nggak bisa kasih")
+            else:
+                lines.append(f"✅ `{key}` — **{role.name}** (posisi {role.position}) siap dipakai")
+
+        embed = discord.Embed(
+            title="🔧 Diagnosa Konfigurasi Role AutoGate",
+            description="\n".join(lines),
+            color=discord.Color.blurple()
+        )
+        embed.set_footer(text="Kalau ada 🔒 atau ❌, itu penyebab role prodi nggak masuk.")
+        await ctx.send(embed=embed)
+
+>>>>>>> 48e99c6826155d6e530f6b331a82989245ea1a8a
     # ==============================================================
     # COMMAND DIAGNOSA — jalankan ini kalau role masih nggak masuk
     # ==============================================================
@@ -735,6 +855,7 @@ class AutoGate(commands.Cog):
         await self.bot.wait_until_ready()
 
     # ==============================================================
+<<<<<<< HEAD
     # ROLE KELAS — dibuat otomatis dari pilihan user di website
     # ==============================================================
     def class_roles_of(self, member: discord.Member):
@@ -909,6 +1030,8 @@ class AutoGate(commands.Cog):
         await self.bot.wait_until_ready()
 
     # ==============================================================
+=======
+>>>>>>> 48e99c6826155d6e530f6b331a82989245ea1a8a
     # GEMINI API
     # ==============================================================
     async def panggil_gemini_api(self, prompt, image_data, mime_type):
@@ -1005,9 +1128,12 @@ class AutoGate(commands.Cog):
             f"Atau verifikasi lebih cepat melalui **Website Resmi Telyu Jekardah!**\n"
             f"⚠️ **PENTING:** Pastikan **Nama Lengkap, Nomor Registrasi (11 Angka), "
             f"Prodi, Kampus Jakarta**, dan tahun **2026/2027** terlihat dengan jelas ya!\n\n"
+<<<<<<< HEAD
             f"🎓 **Role kelas** (mis. `JS1DKV-26-REG-01`) didapat setelah kamu **memilih kelas "
             f"di website** — bot yang bikin & masangin role-nya otomatis. "
             f"Pilihannya **permanen**, jadi teliti dulu sebelum simpan.\n\n"
+=======
+>>>>>>> 48e99c6826155d6e530f6b331a82989245ea1a8a
             f"📄 **Link Drive di bawah ini CUMA buat LIHAT CONTOH format SKL yang valid, "
             f"BUKAN tempat upload ya:**\n"
             f"https://drive.google.com/drive/folders/157xVAUCZHl7PSMP-Zj4brYPwXDY9baXd?usp=sharing\n\n"
@@ -1161,6 +1287,7 @@ class AutoGate(commands.Cog):
             no_reg = match_noreg.group(0)
 
             # --- Cek Database (anti maling SKL) ---
+<<<<<<< HEAD
             # Pemilik diikat ke Discord ID; username cuma dipakai untuk baris
             # warisan yang discord_id-nya masih NULL (belum ke-backfill).
             discord_id_str = str(message.author.id)
@@ -1182,6 +1309,20 @@ class AutoGate(commands.Cog):
                         f"milik orang lain!"
                     )
                     return
+=======
+            record = await self.bot.pool.fetchrow(
+                "SELECT username FROM skl_registry WHERE no_reg = $1", no_reg
+            )
+            if record and record['username'] != discord_username:
+                await self.gagal(
+                    message.channel, message.author,
+                    f"🚨 **PELANGGARAN TERDETEKSI!** {message.author.mention}\n"
+                    f"Nomor registrasi **{no_reg}** sudah tertaut dengan akun Discord lain "
+                    f"(`{record['username']}`). Kamu tidak bisa menggunakan Dokumen SKL "
+                    f"milik orang lain!"
+                )
+                return
+>>>>>>> 48e99c6826155d6e530f6b331a82989245ea1a8a
 
             # --- Cek Kampus, Tahun, Prodi ---
             syarat_kampus = "jakarta" in teks or "telkom university" in teks
@@ -1208,6 +1349,7 @@ class AutoGate(commands.Cog):
 
             print(f"🔎 Prodi terdeteksi: '{keyword_cocok}' → role key '{role_key}'")
 
+<<<<<<< HEAD
             # --- Kelas sudah paten? Prodi ikut paten. ---
             # Prefix kelas (JS1DKV, JS1SI, ...) terikat ke prodi, jadi user yang
             # kelasnya sudah terkunci tidak boleh verifikasi ulang pakai SKL prodi
@@ -1250,6 +1392,8 @@ class AutoGate(commands.Cog):
                     )
                     return
 
+=======
+>>>>>>> 48e99c6826155d6e530f6b331a82989245ea1a8a
             # ==========================================================
             # DOKUMEN VALID — mulai proses pemberian role & simpan DB
             # ==========================================================
@@ -1260,6 +1404,7 @@ class AutoGate(commands.Cog):
             #  kalau role nggak ketemu, no_reg nggak pernah ke-lock dan
             #  SKL yang sama bisa dipakai berulang oleh akun lain.)
             try:
+<<<<<<< HEAD
                 # discord_id ikut disimpan supaya no_reg terikat ke akun, bukan
                 # ke username yang bisa diganti. Untuk baris warisan (discord_id
                 # NULL), backfill hanya boleh dilakukan oleh pemilik sahnya —
@@ -1275,6 +1420,12 @@ class AutoGate(commands.Cog):
                        AND lower(skl_registry.username) = lower(EXCLUDED.username)
                     """,
                     no_reg, discord_username, discord_id_str
+=======
+                await self.bot.pool.execute(
+                    "INSERT INTO skl_registry (no_reg, username) VALUES ($1, $2) "
+                    "ON CONFLICT (no_reg) DO NOTHING",
+                    no_reg, discord_username
+>>>>>>> 48e99c6826155d6e530f6b331a82989245ea1a8a
                 )
                 await self.bot.pool.execute(
                     "INSERT INTO maba_roles (username, role_name, full_name) "
@@ -1284,6 +1435,10 @@ class AutoGate(commands.Cog):
                 )
 
                 # Sinkronkan balik ke tabel users milik website
+<<<<<<< HEAD
+=======
+                discord_id_str = str(message.author.id)
+>>>>>>> 48e99c6826155d6e530f6b331a82989245ea1a8a
                 web_prodi = ROLE_TO_WEB_PRODI.get(role_key, "Umum")
                 status = await self.bot.pool.execute(
                     """
@@ -1315,12 +1470,18 @@ class AutoGate(commands.Cog):
 
             acc_msg = await message.channel.send(
                 f"✅ **Verifikasi Berhasil!** Halo **{nama_depan}** {message.author.mention}, "
+<<<<<<< HEAD
                 f"dokumen SKL lu lolos untuk prodi **{role_key}**. Cuss cek room welcome-center!\n"
                 f"🎓 Mau dapet **role kelas** (mis. `JS1DKV-26-REG-01`)? Pilih kelasmu di "
                 f"**Website Resmi Telyu Jekardah** — role-nya nempel otomatis dalam 1 menit. "
                 f"Pilih dengan teliti ya, **kelas itu permanen** dan cuma bisa dibetulkan Admin."
             )
             await asyncio.sleep(15)
+=======
+                f"dokumen SKL lu lolos untuk prodi **{role_key}**. Cuss cek room welcome-center!"
+            )
+            await asyncio.sleep(5)
+>>>>>>> 48e99c6826155d6e530f6b331a82989245ea1a8a
             try:
                 await acc_msg.delete()
             except Exception:
