@@ -10,6 +10,7 @@ from datetime import timedelta
 class PrivateHelpDropdown(discord.ui.Select):
     def __init__(self):
         opsi = [
+            discord.SelectOption(label="Verifikasi & Kelas", description="Alur SKL, role prodi, dan role kelas otomatis", emoji="🎓"),
             discord.SelectOption(label="Leveling & Rank", description="Panduan sistem XP dan Role Hunter", emoji="🏆"),
             discord.SelectOption(label="Ekonomi & Koin", description="Cara mendapatkan koin dan dompet digital", emoji="🪙"),
             discord.SelectOption(label="Musik & Soundboard", description="Panduan memutar lagu & efek suara", emoji="🎵"),
@@ -22,7 +23,52 @@ class PrivateHelpDropdown(discord.ui.Select):
         val = self.values[0]
         embed = discord.Embed()
 
-        if val == "Leveling & Rank":
+        if val == "Verifikasi & Kelas":
+            embed = discord.Embed(
+                title="🎓 Panduan Verifikasi & Kelas",
+                description=(
+                    "Ada **dua tahap** sebelum kamu punya semua role: verifikasi SKL "
+                    "(dapat role prodi) lalu pilih kelas di website (dapat role kelas)."
+                ),
+                color=discord.Color.brand_green()
+            )
+            embed.add_field(
+                name="1️⃣ Verifikasi SKL",
+                value=(
+                    "Upload foto **SKL** di room verifikasi, **atau** verifikasi lewat "
+                    "**Website Resmi Telyu Jekardah** (lebih cepat).\n"
+                    "Pastikan **Nama Lengkap, Nomor Registrasi (11 angka), Prodi, "
+                    "Kampus Jakarta**, dan tahun **2026/2027** kelihatan jelas.\n"
+                    "Hasilnya: role **MEMBER** + role **prodi** kamu."
+                ),
+                inline=False
+            )
+            embed.add_field(
+                name="2️⃣ Pilih Kelas di Website",
+                value=(
+                    "Buka **/profile** di website → kartu **Pilih Kelas** → putar roda "
+                    "tahun & nomor, formatnya `JS1DKV-26-REG-01`.\n"
+                    "Kelas kamu nggak ada di daftar? Ada tombol **\"Kelas mu tidak ada?\"** "
+                    "untuk mengetik kode sendiri (mis. `GAB01`).\n"
+                    "Bot otomatis membuat & memasangkan role kelasnya dalam **≤1 menit** — "
+                    "role-nya berwarna sesuai prodi dan bisa di-`@mention`."
+                ),
+                inline=False
+            )
+            embed.add_field(
+                name="🔒 Kelas itu PERMANEN",
+                value=(
+                    "Sekali disimpan, kelas **tidak bisa kamu ganti sendiri** — makanya ada "
+                    "konfirmasi dulu sebelum simpan. Prodi juga ikut terkunci: SKL prodi lain "
+                    "akan ditolak.\n"
+                    "Reset akun di website **tidak** menghapus kelas & prodi.\n"
+                    "Salah pilih kelas? Hubungi **Admin** untuk menjalankan `!resetkelas`, "
+                    "lalu pilih ulang di website."
+                ),
+                inline=False
+            )
+
+        elif val == "Leveling & Rank":
             embed = discord.Embed(
                 title="🏆 Panduan Leveling & Rank",
                 description="Bot menggunakan sistem Hybrid! Kamu dapat XP dari Chat (2 XP) dan dari VC (1 XP / 2 Menit).",
@@ -86,6 +132,9 @@ class PrivateHelpDropdown(discord.ui.Select):
                 color=discord.Color.red()
             )
             embed.add_field(name="`!clear`", value="**Akses:** Owner Bot\n**Fungsi:** Menghapus (purge) pesan di channel (default 5, max 100).", inline=False)
+            embed.add_field(name="`!cekrole`", value="**Akses:** Administrator\n**Fungsi:** Diagnosa konfigurasi role prodi + hierarki bot. Jalankan ini kalau role verifikasi nggak masuk.", inline=False)
+            embed.add_field(name="`!cekkelas`", value="**Akses:** Administrator\n**Fungsi:** Diagnosa role kelas — daftar role + jumlah anggota, tanda role kelas yang **kosong** (aman dihapus manual), dan baris DB yang belum tersinkron. Read-only.", inline=False)
+            embed.add_field(name="`!resetkelas @user`", value="**Akses:** Administrator\n**Fungsi:** Satu-satunya cara membetulkan kelas yang salah. Kelas dikosongkan (pakai konfirmasi) supaya user bisa pilih ulang di website; role kelas dicabut dari member tapi **tidak dihapus dari server**. Bisa juga pakai Discord ID mentah.", inline=False)
             embed.add_field(name="`!spawnstats`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memaksa dashboard statistik muncul ulang.", inline=False)
             embed.add_field(name="`!spawnhelp`", value="**Akses:** Administrator\n**Fungsi:** Command rahasia untuk memunculkan ulang dashboard help secara paksa.", inline=False)
             embed.add_field(name="`!synckoin`", value="**Akses:** Administrator\n**Fungsi:** Sinkronisasi manual untuk membagikan koin kompensasi berdasarkan akumulasi XP member lama.", inline=False)
