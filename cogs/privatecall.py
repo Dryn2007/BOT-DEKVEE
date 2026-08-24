@@ -350,7 +350,6 @@ class PrivateCallCog(commands.Cog):
 
     async def cog_load(self):
         self.bot.add_view(DeleteRoomView())
-        self.sweep_rooms_task.start()
 
     def cog_unload(self):
         self.sweep_rooms_task.cancel()
@@ -359,6 +358,8 @@ class PrivateCallCog(commands.Cog):
     async def on_ready(self):
         if not self.is_spawned:
             self.is_spawned = True
+            if not self.sweep_rooms_task.is_running():
+                self.sweep_rooms_task.start()
             await asyncio.sleep(3)
             await self.spawn_dashboard()
 
