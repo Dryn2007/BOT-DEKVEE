@@ -3,8 +3,6 @@ __pycache__/
 voicelog.db
 
 # Kredensial — JANGAN pernah masuk git
-config
-*.pem
-*.key
+
 cookies.txt
 private_calls.db
