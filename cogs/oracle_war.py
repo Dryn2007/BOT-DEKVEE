@@ -8,8 +8,15 @@ from datetime import datetime, timedelta
 # ==========================================
 # 1. KONFIGURASI ORACLE CLOUD
 # ==========================================
-config = oci.config.from_file(file_location="config")
-compute_client = oci.core.ComputeClient(config)
+try:
+    config = oci.config.from_file(file_location="config")
+    compute_client = oci.core.ComputeClient(config)
+    OCI_READY = True
+except Exception as e:
+    print(f"⚠️ [OracleWar] OCI config tidak ditemukan, fitur Oracle dinonaktifkan: {e}")
+    config = None
+    compute_client = None
+    OCI_READY = False
 
 compartment_id = "ocid1.tenancy.oc1..aaaaaaaavotqdahvfb5b2epny5764gvur36v47vvhibzjw2glvghkjwptycq"
 availability_domain = "Hpyp:AP-BATAM-1-AD-1"
@@ -65,6 +72,9 @@ class OracleWar(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         print("✅ Modul War Oracle berhasil dimuat!")
+        if not OCI_READY:
+            print("⚠️ OCI belum dikonfigurasi, war task tidak dijalankan.")
+            return
         # Menyalakan war secara otomatis saat bot online
         if not self.war_task.is_running():
             self.war_task.start()
@@ -72,6 +82,9 @@ class OracleWar(commands.Cog):
 
     @tasks.loop(minutes=2)
     async def war_task(self):
+        if not OCI_READY:
+            self.war_task.stop()
+            return
         channel = self.bot.get_channel(TARGET_CHANNEL_ID)
         if not channel:
             print("❌ Channel tujuan tidak ditemukan. Pastikan TARGET_CHANNEL_ID benar.")
@@ -116,6 +129,9 @@ class OracleWar(commands.Cog):
     @commands.command()
     async def startwar(self, ctx):
         if ctx.channel.id != TARGET_CHANNEL_ID: return
+        if not OCI_READY:
+            await ctx.send("⚠️ OCI belum dikonfigurasi. Fitur Oracle tidak tersedia.")
+            return
         if self.war_task.is_running():
             await ctx.send("⏳ Bot sudah otomatis berjalan di latar belakang!")
         else:
