@@ -48,7 +48,7 @@ def try_create_instance():
                     subnet_id="ocid1.subnet.oc1.ap-batam-1.aaaaaaaa7q6oo53etlhk5n7q4kp33afmtbvuxsj2ey53kwtwdeugx45rh6yq", 
                     assign_public_ip=True
                 ),
-                metadata={"ssh_authorized_keys": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCxFdVgfWtP3+8Lv/XVH4g2bZh0mi4nGQaGbrUou8CLv7uW4OuSWnPczrueTcODxRuhmhE3F42VZJrsQFhvTaBU7n4pVPWPoaZ3V2gekaed2rztJsfw4jwBvBcAvBi0XXNQSBa8OyzRa2F3T2/2lgpP1mBlOCDKBgaAI0yuaQhYcpfHkefz5UePq5JSmGdFNgXu5C8KThQzV4iSQPBIQc5z6dKrAEa593L60mfgBOE1eL6Fadh3HvcqFB96wj1qLhpHBkZnF9tIgk8xgmChKyELJHxg4DpDU3K6zehqede4lipVgLAF/v/2H+HUhvZKU/UzOgse8m5viQQVrFxfqItV ssh-key-2026-07-23"}
+                metadata={"ssh_authorized_keys": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCrEoIFFVxUzDDgGWLdlfrhqrmwDoSHDgQj9rlcBNn+TTrkY3mwjKtxPMPRBqUeWvFRIVQUDdT2Ur19/smyT9T3Oh6OKSsjbisSJO8OmyWYCVvajx5wbmzvUIt1dI4sP7jNFyF+Ljw6nLaLd2fFUbCumhy8NUsMJhRMcf28kTCWgn14edNB1pjgXnQMmQhSL5Mgr6hZ9Mrzb5qy7W1j4RSJza2CEQySdMQfvcMFX5TRDqd9W8aeEypsjUMyOoy9MzhLnpH7RxTolCjz60HkvQPpvYs726wfJzlMbwO2jtRBz/3iMjAOv/8EENO2KLPAWi/JcxzjidFe4EpymPVdE5OH oracle-vps-2026"}
             )
         )
         return "SUCCESS"
