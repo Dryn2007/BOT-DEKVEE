@@ -5,3 +5,4 @@ easy-pil
 PyNaCl
 yt-dlp
 aiohttp
+oci
