@@ -295,14 +295,11 @@ class AutoGate(commands.Cog):
         # supaya nggak mepet banget ke limit resmi Google (Free Tier = 15 RPM)
         self.gemini_limiter = RateLimiter(max_calls=12, period=60.0)
 
-        # Mulai background task untuk sinkronisasi Web -> Discord
-        self.sync_web_verification.start()
 
         # Role kelas: cache {nama_kelas: role_id} + lock supaya dua baris DB
         # dengan kelas yang sama tidak pernah bikin dua role kembar.
         self._class_role_cache = {}
         self._class_role_lock = asyncio.Lock()
-        self.sync_web_kelas.start()
 
     def cog_unload(self):
         self.sync_web_verification.cancel()
@@ -421,6 +418,12 @@ class AutoGate(commands.Cog):
 
             self.is_ready = True
             print("✅ Tabel Keamanan SKL & Sync Discord siap!")
+
+            # Mulai background task setelah bot siap
+            if not self.sync_web_verification.is_running():
+                self.sync_web_verification.start()
+            if not self.sync_web_kelas.is_running():
+                self.sync_web_kelas.start()
 
             # Audit konfigurasi role saat startup — ketahuan langsung kalau ada yang salah
             guild = self.bot.get_guild(self.guild_id)
