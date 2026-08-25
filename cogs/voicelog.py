@@ -5,6 +5,8 @@ import asyncpg
 import os
 import asyncio
 
+from roomconfig import is_private_call
+
 # ====================================================================
 # KONFIGURASI ROLE PRODI (WAJIB DIISI)
 # Masukkan ID Role untuk masing-masing Prodi (DKV, TEKINFO, dll) di dalam list ini.
@@ -17,11 +19,9 @@ PRODI_ROLE_IDS = [
 ]
 
 # ====================================================================
-# KATEGORI ROOM PRIVAT (HARUS SAMA PERSIS DENGAN CATEGORY_PRIVAT_ID
-# di file privatecall.py) — dipakai untuk MENGECUALIKAN room privat
-# dari sistem log panggilan.
+# KATEGORI ROOM PRIVAT — ID-nya dipusatkan di roomconfig.py (root repo),
+# dipakai untuk MENGECUALIKAN room privat dari sistem log panggilan.
 # ====================================================================
-PRIVATE_CALL_CATEGORY_ID = 1528284380022313011
 
 
 class VoiceLog(commands.Cog):
@@ -111,9 +111,7 @@ class VoiceLog(commands.Cog):
     # Helper: cek apakah sebuah channel adalah room privat (auto-call)
     # ------------------------------------------------------------
     def _is_private_call(self, channel):
-        if channel is None:
-            return False
-        return getattr(channel, "category_id", None) == PRIVATE_CALL_CATEGORY_ID
+        return is_private_call(channel)
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):

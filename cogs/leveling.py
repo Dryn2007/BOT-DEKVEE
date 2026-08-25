@@ -3,6 +3,9 @@ from discord.ext import commands
 from datetime import datetime, timedelta
 import asyncio
 
+# Room privat tidak boleh jadi tempat panen XP/koin
+from roomconfig import is_private_call
+
 # Import plugin luar untuk membuat gambar Rank Card
 from easy_pil import Editor, Canvas, load_image_async, Font
 
@@ -131,7 +134,10 @@ class Leveling(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or not message.guild: return
-        
+
+        # Chat di dalam room privat tidak dapat XP maupun koin
+        if is_private_call(message.channel): return
+
         last_time = self.cooldowns.get(message.author.id, datetime.min)
         if datetime.now() - last_time < timedelta(seconds=60): return
         
@@ -158,12 +164,17 @@ class Leveling(commands.Cog):
     async def on_voice_state_update(self, member, before, after):
         if member.bot: return
 
-        # User masuk Voice Channel
-        if before.channel is None and after.channel is not None:
+        # Room privat tidak dihitung: waktu di sana tidak menghasilkan XP sama sekali
+        before_ok = before.channel is not None and not is_private_call(before.channel)
+        after_ok = after.channel is not None and not is_private_call(after.channel)
+
+        # Mulai hitung (join VC publik, atau keluar dari room privat ke VC publik)
+        if not before_ok and after_ok:
             self.voice_sessions[member.id] = datetime.now()
-            
-        # User keluar Voice Channel
-        elif before.channel is not None and after.channel is None:
+
+        # Klaim XP (keluar dari voice, atau masuk ke room privat)
+        # Pindah antar VC publik tidak memotong sesi.
+        elif before_ok and not after_ok:
             join_time = self.voice_sessions.pop(member.id, None)
             
             if join_time:

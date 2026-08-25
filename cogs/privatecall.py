@@ -5,12 +5,14 @@ import traceback
 import sqlite3
 import time
 
+# ID kategori & channel log dipusatkan di roomconfig.py (root repo) supaya
+# cog lain (voicelog, leveling, afkkick) tidak menyalin ID-nya lagi.
+from roomconfig import PRIVATE_CALL_CATEGORY_ID as CATEGORY_PRIVAT_ID, LOG_CHANNEL_ID
+
 # ====================================================================
 # 0. KONFIGURASI ID & DATABASE
 # ====================================================================
-ROOM_CALL_ID = 1528283280003174560 
-CATEGORY_PRIVAT_ID = 1528284380022313011 
-LOG_CHANNEL_ID = 1534469424084418600 # <<< GANTI DENGAN ID CHANNEL UNTUK LOG/ADMIN
+ROOM_CALL_ID = 1528283280003174560
 DB_FILE = "private_calls.db"
 
 # Inisialisasi Database
@@ -28,12 +30,54 @@ def init_db():
 
 init_db()
 
+
 # ====================================================================
-# 1. VIEW UNTUK TOMBOL HAPUS ROOM (PERSISTENT)
+# 0b. HELPER AKSES ROOM
+# ====================================================================
+def user_has_room_access(vc, member) -> bool:
+    """True kalau member memang bagian dari room ini (boleh mengundang orang lain)."""
+    if member in vc.members:                        # sedang nongkrong di dalam room
+        return True
+    if vc.overwrites_for(member).view_channel:      # diundang saat room dibuat / ditambah belakangan
+        return True
+    return bool(member.guild_permissions.manage_channels)
+
+
+# ====================================================================
+# 1. VIEW UNTUK TOMBOL KONTROL ROOM (PERSISTENT)
 # ====================================================================
 class DeleteRoomView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
+
+    @discord.ui.button(label="Tambah User", style=discord.ButtonStyle.primary, emoji="➕", custom_id="add_private_room_user")
+    async def btn_add_user(self, interaction: discord.Interaction, button: discord.ui.Button):
+        vc = interaction.channel
+        cog = interaction.client.get_cog("PrivateCallCog")
+
+        if cog is None or not isinstance(vc, discord.VoiceChannel) or vc.id not in cog.active_rooms:
+            await interaction.response.send_message(
+                "❌ Data room tidak ditemukan atau sudah kadaluarsa.", ephemeral=True
+            )
+            return
+
+        if not user_has_room_access(vc, interaction.user):
+            await interaction.response.send_message(
+                "❌ Hanya orang yang ada di dalam room ini yang bisa menambahkan user baru!", ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title="➕ Tambah User ke Room Ini",
+            description=(
+                "Pilih user yang mau diundang (maksimal 10 sekali kirim).\n\n"
+                "User yang dipilih langsung bisa **melihat** dan **masuk** ke room ini."
+            ),
+            color=discord.Color.blurple(),
+        )
+        await interaction.response.send_message(
+            embed=embed, view=AddUserView(vc, interaction.user), ephemeral=True
+        )
 
     @discord.ui.button(label="Hapus Room Sekarang", style=discord.ButtonStyle.danger, emoji="🗑️", custom_id="delete_private_room")
     async def btn_delete(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -58,6 +102,117 @@ class DeleteRoomView(discord.ui.View):
                 await interaction.response.send_message("❌ Hanya pembuat room yang bisa menggunakan tombol ini!", ephemeral=True)
         else:
             await interaction.response.send_message("❌ Data room tidak ditemukan atau sudah kadaluarsa.", ephemeral=True)
+
+
+# ====================================================================
+# 1b. VIEW UNTUK MENAMBAH USER KE ROOM YANG SUDAH JALAN
+# ====================================================================
+class AddUserView(discord.ui.View):
+    def __init__(self, vc, invoker):
+        super().__init__(timeout=180.0)
+        self.vc = vc
+        self.invoker = invoker
+
+        self.select_users = discord.ui.UserSelect(
+            placeholder="Pilih user yang mau diundang...",
+            min_values=1,
+            max_values=10,
+            row=0
+        )
+        self.select_users.callback = self.defer_callback
+        self.add_item(self.select_users)
+
+        self.btn_add = discord.ui.Button(label="Tambah", style=discord.ButtonStyle.success, emoji="✅", row=1)
+        self.btn_add.callback = self.add_callback
+        self.add_item(self.btn_add)
+
+        self.btn_cancel = discord.ui.Button(label="Batal", style=discord.ButtonStyle.secondary, emoji="✖️", row=1)
+        self.btn_cancel.callback = self.cancel_callback
+        self.add_item(self.btn_cancel)
+
+    async def defer_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+
+    async def cancel_callback(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(
+            content="❌ Dibatalkan. Tidak ada user yang ditambahkan.", embed=None, view=None
+        )
+
+    async def add_callback(self, interaction: discord.Interaction):
+        if not self.select_users.values:
+            await interaction.response.send_message(
+                "⚠️ Pilih dulu minimal 1 user dari dropdown di atas.", ephemeral=True
+            )
+            return
+
+        await interaction.response.defer()
+        guild = interaction.guild
+        ditambahkan, dilewati = [], []
+
+        for user in self.select_users.values:
+            member = guild.get_member(user.id)
+            if member is None:
+                dilewati.append(f"{user.mention} (bukan member server)")
+            elif member.bot:
+                dilewati.append(f"{member.mention} (bot)")
+            elif self.vc.overwrites_for(member).view_channel:
+                dilewati.append(f"{member.mention} (sudah punya akses)")
+            else:
+                try:
+                    await self.vc.set_permissions(
+                        member,
+                        view_channel=True,
+                        connect=True,
+                        reason=f"Ditambahkan ke room privat oleh {interaction.user}"
+                    )
+                    ditambahkan.append(member)
+                except Exception as e:
+                    dilewati.append(f"{member.mention} (gagal: `{e.__class__.__name__}`)")
+
+        await self.finish(interaction, ditambahkan, dilewati)
+
+    async def finish(self, interaction: discord.Interaction, ditambahkan, dilewati):
+        embed = discord.Embed(title="➕ Hasil Tambah User", color=discord.Color.green() if ditambahkan else discord.Color.orange())
+        if ditambahkan:
+            embed.add_field(
+                name=f"✅ Berhasil ditambahkan ({len(ditambahkan)})",
+                value="\n".join(f"• {m.mention}" for m in ditambahkan),
+                inline=False
+            )
+        if dilewati:
+            embed.add_field(
+                name=f"⚠️ Dilewati ({len(dilewati)})",
+                value="\n".join(f"• {t}" for t in dilewati),
+                inline=False
+            )
+
+        try:
+            await interaction.edit_original_response(embed=embed, view=None)
+        except Exception:
+            pass
+
+        if not ditambahkan:
+            return
+
+        mentions = ", ".join(m.mention for m in ditambahkan)
+
+        # Notifikasi publik di chat room (mention bikin user baru langsung ke-ping)
+        try:
+            await self.vc.send(
+                f"➕ {mentions} ditambahkan ke room ini oleh {interaction.user.mention}. Selamat datang!"
+            )
+        except Exception:
+            pass
+
+        cog = interaction.client.get_cog("PrivateCallCog")
+        if cog:
+            await cog.log_to_admin(
+                "➕ User Ditambahkan ke Room Privat",
+                f"**Room:** {self.vc.mention} (`{self.vc.name}`)\n"
+                f"**Ditambahkan oleh:** {interaction.user.mention}\n"
+                f"**User baru:** {mentions}",
+                discord.Color.blurple()
+            )
 
 
 # ====================================================================
@@ -126,7 +281,14 @@ class RoomNameModal(discord.ui.Modal, title='Custom Nama Room Privat'):
             # 4. Kirim dan Pin pesan di dalam Room
             embed_pin = discord.Embed(
                 title="⚙️ Kontrol Room Privat",
-                description=f"Room ini **tersembunyi dari publik**.\n\n⚠️ **Perhatian:**\n* Room ini akan otomatis terhapus jika kosong (tidak ada satupun orang) selama **1 Hari (24 Jam)**.\n* Room ini memiliki batas hidup maksimum selama **{self.duration_label}**.\n\nKlik tombol di bawah jika kamu ingin menghapusnya lebih awal.",
+                description=(
+                    f"Room ini **tersembunyi dari publik**.\n\n"
+                    f"➕ **Tambah User:** siapa pun yang ada di room ini boleh mengundang teman lain lewat tombol di bawah.\n\n"
+                    f"⚠️ **Perhatian:**\n"
+                    f"* Room ini akan otomatis terhapus jika kosong (tidak ada satupun orang) selama **1 Hari (24 Jam)**.\n"
+                    f"* Room ini memiliki batas hidup maksimum selama **{self.duration_label}**.\n\n"
+                    f"Klik tombol 🗑️ di bawah jika kamu ingin menghapusnya lebih awal."
+                ),
                 color=discord.Color.red()
             )
             try:
@@ -362,6 +524,47 @@ class PrivateCallCog(commands.Cog):
                 self.sweep_rooms_task.start()
             await asyncio.sleep(3)
             await self.spawn_dashboard()
+            await self.refresh_room_controls()
+
+    async def refresh_room_controls(self):
+        """Pasang ulang tombol kontrol di pesan pin room yang dibuat sebelum update.
+
+        Komponen tombol tersimpan di message, bukan di class View — jadi room lama
+        tetap cuma punya tombol hapus sampai pesannya di-edit ulang.
+        """
+        INFO_FIELD = "➕ Tambah User"
+
+        for vc_id in list(self.active_rooms):
+            vc = self.bot.get_channel(vc_id)
+            if not isinstance(vc, discord.VoiceChannel):
+                continue
+
+            try:
+                # discord.py >= 2.6: pins() adalah async iterator, bukan list
+                async for msg in vc.pins(limit=20):
+                    if msg.author.id != self.bot.user.id or not msg.embeds:
+                        continue
+                    embed = msg.embeds[0]
+                    if embed.title != "⚙️ Kontrol Room Privat":
+                        continue
+
+                    # Room lama: embed-nya belum menyebut fitur tambah user
+                    sudah_ada = ("Tambah User" in (embed.description or "")) or \
+                                any(INFO_FIELD in f.name for f in embed.fields)
+                    if sudah_ada:
+                        await msg.edit(view=DeleteRoomView())
+                    else:
+                        embed.add_field(
+                            name=INFO_FIELD,
+                            value="Siapa pun yang ada di room ini boleh mengundang teman lain lewat tombol di bawah.",
+                            inline=False
+                        )
+                        await msg.edit(embed=embed, view=DeleteRoomView())
+                    break
+            except Exception:
+                pass
+
+            await asyncio.sleep(1)  # jaga rate limit kalau room-nya banyak
 
     async def spawn_dashboard(self):
         await self.bot.wait_until_ready()
