@@ -95,6 +95,25 @@ CLASS_ROLE_DEFAULT_COLOR = 0x99AAB5  # abu Discord — penanda prodi belum dipet
 KELAS_RE = re.compile(r'^JS1[A-Z]{2,5}-\d{2}-REG-[A-Z0-9]{1,10}$')
 
 
+# ==========================================
+# 0c. JARING PENGAMAN PESAN HALT
+# ==========================================
+# Kenapa ini ada: `on_member_join` cuma sampai kalau bot SEDANG online. Worker
+# di-restart tiap deploy dan gateway Discord kadang drop event saat resume, jadi
+# member yang join tepat di celah itu nggak pernah dapat instruksi upload SKL
+# sama sekali — room regis kelihatan kosong buat dia.
+#
+# Sweep di bawah ini nyusul member yang kelewat: cek siapa yang belum punya role
+# MEMBER, join-nya masih baru, dan belum pernah disebut bot di room regis.
+HALT_SWEEP_MIN_AGE = 120         # detik — kasih waktu on_member_join kerja dulu
+HALT_SWEEP_MAX_AGE = 24 * 3600   # detik — jangan ungkit member lama
+HALT_SWEEP_MAX_PER_RUN = 5       # batas kirim per putaran, biar room nggak kebanjiran
+HALT_HISTORY_SCAN = 100          # jumlah pesan terakhir yang dicek buat anti-duplikat
+
+# Dipakai untuk membaca ulang mention di pesan bot sendiri (<@123> / <@!123>)
+MENTION_RE = re.compile(r'<@!?(\d+)>')
+
+
 def resolve_prodi(teks: str):
     """
     Cari prodi dari teks OCR pakai word-boundary matching.
@@ -291,6 +310,11 @@ class AutoGate(commands.Cog):
         self.warned_users = set()
         self.is_ready = False
 
+        # Member yang sudah pernah di-DM instruksi gerbang (per sesi bot).
+        # Tanpa ini, member yang lewat Rules Screening bisa dapat DM dobel:
+        # sekali saat join (masih pending), sekali lagi saat setuju rules.
+        self._dm_gate_terkirim = set()
+
         # Batasi ke 12 RPM (bukan 15) sebagai safety margin,
         # supaya nggak mepet banget ke limit resmi Google (Free Tier = 15 RPM)
         self.gemini_limiter = RateLimiter(max_calls=12, period=60.0)
@@ -304,6 +328,7 @@ class AutoGate(commands.Cog):
     def cog_unload(self):
         self.sync_web_verification.cancel()
         self.sync_web_kelas.cancel()
+        self.sweep_halt_terlewat.cancel()
 
     # ==============================================================
     # HELPER ROLE — semua pencarian role lewat sini
@@ -424,6 +449,8 @@ class AutoGate(commands.Cog):
                 self.sync_web_verification.start()
             if not self.sync_web_kelas.is_running():
                 self.sync_web_kelas.start()
+            if not self.sweep_halt_terlewat.is_running():
+                self.sweep_halt_terlewat.start()
 
             # Audit konfigurasi role saat startup — ketahuan langsung kalau ada yang salah
             guild = self.bot.get_guild(self.guild_id)
@@ -999,10 +1026,20 @@ class AutoGate(commands.Cog):
     # ==============================================================
     # FUNGSI UNTUK MEMUNCULKAN ULANG PESAN SURUH UPLOAD
     # ==============================================================
-    async def send_halt_message(self, channel, member, is_retry=False):
-        sapaan = "Ayo coba lagi" if is_retry else "Berhenti di situ"
+    async def resolve_channel(self, channel_id: int):
+        """Ambil channel dari cache, fallback ke REST. None kalau tetap gagal."""
+        channel = self.bot.get_channel(channel_id)
+        if channel is not None:
+            return channel
+        try:
+            return await self.bot.fetch_channel(channel_id)
+        except Exception as e:
+            print(f"❌ [GATE] Channel {channel_id} tidak bisa diambil: {e}")
+            return None
 
-        konten = (
+    def halt_text(self, member, is_retry=False):
+        sapaan = "Ayo coba lagi" if is_retry else "Berhenti di situ"
+        return (
             f"🚨 **HALT!** {sapaan}, {member.mention}!\n\n"
             f"Untuk masuk, **upload foto Surat Kelulusan (SKL)** kamu di sini.\n"
             f"Atau verifikasi lebih cepat melalui **Website Resmi Telyu Jekardah!**\n"
@@ -1018,6 +1055,17 @@ class AutoGate(commands.Cog):
             f"Langsung drop fotonya aja!"
         )
 
+    async def send_halt_message(self, channel, member, is_retry=False):
+        """
+        Kirim instruksi upload SKL ke room regis.
+
+        Return True kalau pesannya benar-benar terkirim. Dulu fungsi ini tidak
+        pernah melapor apa pun, jadi kegagalan permission (Attach Files / Embed
+        Links / Send Messages dicabut di room regis) cuma jadi keheningan dan
+        kelihatannya seperti "on_member_join nggak jalan".
+        """
+        konten = self.halt_text(member, is_retry)
+
         embed = discord.Embed(
             title="📲 Cara Upload SKL",
             description=(
@@ -1029,14 +1077,88 @@ class AutoGate(commands.Cog):
         )
         embed.set_image(url="attachment://tutorial_upload.png")
 
-        asset_path = "assets/tutorial_upload.png"
-        if not os.path.isfile(asset_path):
-            print(f"❌ Asset '{asset_path}' tidak ditemukan. Halt message dikirim tanpa gambar tutorial.")
-            await channel.send(content=konten)
-            return
+        # Path asset dibikin absolut relatif ke file ini: kalau bot dijalankan
+        # dari direktori lain (systemd/worker), path relatif "assets/..." meleset
+        # dan gambar tutorial hilang tanpa sebab yang jelas.
+        asset_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "assets", "tutorial_upload.png"
+        )
 
-        file = discord.File(asset_path, filename="tutorial_upload.png")
-        await channel.send(content=konten, embed=embed, file=file)
+        try:
+            if os.path.isfile(asset_path):
+                file = discord.File(asset_path, filename="tutorial_upload.png")
+                await channel.send(content=konten, embed=embed, file=file)
+            else:
+                print(f"❌ [GATE] Asset '{asset_path}' tidak ada. "
+                      f"Halt message dikirim tanpa gambar tutorial.")
+                await channel.send(content=konten)
+            print(f"📨 [GATE] Halt message terkirim ke #{getattr(channel, 'name', channel.id)} "
+                  f"untuk {member} (retry={is_retry})")
+            return True
+        except discord.Forbidden:
+            perms = channel.permissions_for(channel.guild.me) if getattr(channel, "guild", None) else None
+            detail = ""
+            if perms:
+                kurang = [nama for nama, ada in (
+                    ("View Channel", perms.view_channel),
+                    ("Send Messages", perms.send_messages),
+                    ("Embed Links", perms.embed_links),
+                    ("Attach Files", perms.attach_files),
+                ) if not ada]
+                detail = f" Permission bot yang kurang di room itu: {', '.join(kurang) or '—'}."
+            print(f"❌ [GATE] Ditolak Discord saat kirim halt message untuk {member}.{detail}")
+        except discord.HTTPException as e:
+            print(f"❌ [GATE] Discord API error saat kirim halt message untuk {member}: {e}")
+        return False
+
+    async def dm_halt_message(self, member, sekali=True):
+        """
+        Cadangan lewat DM.
+
+        Room regis biasanya menutup **Read Message History** untuk member yang
+        belum terverifikasi. Efeknya: pesan yang dikirim SEBELUM dia membuka room
+        tidak pernah kelihatan olehnya (walau admin melihatnya dengan normal).
+        DM memotong masalah itu. Gagal kirim DM bukan error fatal — banyak orang
+        menutup DM dari server.
+
+        `sekali=True` menjaga satu member cuma di-DM sekali per sesi bot, supaya
+        join + Rules Screening + sweep tidak menumpuk jadi tiga DM identik.
+        """
+        if sekali and member.id in self._dm_gate_terkirim:
+            return False
+        self._dm_gate_terkirim.add(member.id)
+
+        link = f"https://discord.com/channels/{self.guild_id}/{self.pos_satpam_id}"
+        try:
+            await member.send(
+                f"👋 Halo **{member.display_name}**, selamat datang di server "
+                f"**Telyu Jekardah**!\n\n"
+                f"Sebelum bisa jalan-jalan di dalam server, kamu wajib verifikasi dulu: "
+                f"**upload foto SKL** kamu di room regis 👉 {link}\n"
+                f"⚠️ Pastikan **Nama Lengkap, Nomor Registrasi (11 angka), Prodi, "
+                f"Kampus Jakarta**, dan tahun **2026/2027** kelihatan jelas di fotonya.\n\n"
+                f"Kalau room-nya kelihatan kosong, tinggal langsung kirim fotonya aja ya — "
+                f"instruksi lengkapnya nunggu di sana."
+            )
+            print(f"✉️ [GATE] DM instruksi terkirim ke {member}")
+            return True
+        except (discord.Forbidden, discord.HTTPException) as e:
+            print(f"ℹ️ [GATE] DM ke {member} gagal (DM tertutup?): {e}")
+            return False
+
+    async def kirim_gate_lengkap(self, member, is_retry=False, paksa_dm=False):
+        """Room regis + DM sekaligus. Dipakai oleh join, screening, dan sweep."""
+        channel = await self.resolve_channel(self.pos_satpam_id)
+        terkirim = False
+        if channel is None:
+            print(f"❌ [GATE] Room regis (ID {self.pos_satpam_id}) tidak ditemukan — "
+                  f"cek ulang pos_satpam_id, room-nya kemungkinan sudah dihapus/diganti.")
+        else:
+            terkirim = await self.send_halt_message(channel, member, is_retry=is_retry)
+
+        await self.dm_halt_message(member, sekali=not paksa_dm)
+        return terkirim
 
     async def gagal(self, channel, member, pesan):
         """Kirim pesan gagal sementara, lalu tampilkan ulang instruksi upload."""
@@ -1050,21 +1172,230 @@ class AutoGate(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
-        if member.bot:
+        if member.bot or member.guild.id != self.guild_id:
             return
 
-        pos_satpam = self.bot.get_channel(self.pos_satpam_id)
-        if pos_satpam is None:
-            try:
-                pos_satpam = await self.bot.fetch_channel(self.pos_satpam_id)
-            except Exception as e:
-                print(f"❌ Gagal fetch channel pos_satpam untuk {member}: {e}")
-                return
+        # Kalau server pakai Rules Screening ("Membership Screening"), member
+        # masih `pending`: dia belum bisa lihat/kirim apa pun sampai centang
+        # persetujuan rules. Kirim sekarang = pesannya hilang di riwayat sebelum
+        # dia bisa membacanya, jadi ditunda ke on_member_update.
+        if getattr(member, "pending", False):
+            print(f"⏸️ [GATE] {member} masih pending Rules Screening. "
+                  f"Instruksi upload ditunda sampai dia setuju rules.")
+            await self.dm_halt_message(member)
+            return
 
+        await self.kirim_gate_lengkap(member, is_retry=False)
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before, after):
+        """
+        Susulan untuk server yang mengaktifkan Rules Screening.
+
+        Transisi pending True -> False artinya member baru saja menyetujui rules
+        dan detik ini juga baru bisa melihat isi room. Itulah saat yang tepat
+        untuk instruksi upload SKL muncul.
+        """
+        if after.bot or after.guild.id != self.guild_id:
+            return
+        if not (getattr(before, "pending", False) and not getattr(after, "pending", False)):
+            return
+
+        role_member = self.get_role(after.guild, "MEMBER")
+        if role_member and role_member in after.roles:
+            return  # sudah lolos verifikasi, nggak perlu digangguin
+
+        print(f"▶️ [GATE] {after} selesai Rules Screening, kirim instruksi upload sekarang.")
+        await self.kirim_gate_lengkap(after, is_retry=False)
+
+    # ==============================================================
+    # JARING PENGAMAN — nyusul member yang event join-nya kelewat
+    # ==============================================================
+    async def sudah_disebut_bot(self, channel, limit=HALT_HISTORY_SCAN):
+        """
+        Set berisi ID user yang sudah pernah disebut bot di riwayat room regis.
+        Dipakai supaya sweep tidak mengirim instruksi dobel.
+        """
+        disebut = set()
         try:
-            await self.send_halt_message(pos_satpam, member, is_retry=False)
-        except Exception as e:
-            print(f"❌ Gagal kirim halt message ke {member} saat join: {e}")
+            async for msg in channel.history(limit=limit):
+                if msg.author.id != self.bot.user.id:
+                    continue
+                for uid in MENTION_RE.findall(msg.content or ""):
+                    disebut.add(int(uid))
+        except discord.Forbidden:
+            print("⚠️ [SWEEP] Bot tidak punya **Read Message History** di room regis, "
+                  "anti-duplikat tidak bisa dicek. Sweep dilewati.")
+            return None
+        except discord.HTTPException as e:
+            print(f"⚠️ [SWEEP] Gagal baca riwayat room regis: {e}")
+            return None
+        return disebut
+
+    def kandidat_belum_verif(self, guild):
+        """Member baru (2 menit–24 jam) yang belum punya role MEMBER."""
+        role_member = self.get_role(guild, "MEMBER")
+        sekarang = discord.utils.utcnow()
+        hasil = []
+        for m in guild.members:
+            if m.bot or getattr(m, "pending", False) or m.joined_at is None:
+                continue
+            if role_member and role_member in m.roles:
+                continue
+            umur = (sekarang - m.joined_at).total_seconds()
+            if HALT_SWEEP_MIN_AGE <= umur <= HALT_SWEEP_MAX_AGE:
+                hasil.append(m)
+        return hasil
+
+    @tasks.loop(minutes=10.0)
+    async def sweep_halt_terlewat(self):
+        """
+        Setiap 10 menit: kirim instruksi upload ke member yang join-nya kelewat.
+
+        Ini yang menutup lubang paling sering bikin "pesan peringatan nggak ada":
+        bot lagi restart/deploy saat orangnya join, jadi event on_member_join-nya
+        hilang dan nggak ada apa pun yang mengulangnya.
+        """
+        if not self.is_ready:
+            return
+
+        guild = self.bot.get_guild(self.guild_id)
+        if not guild:
+            return
+
+        kandidat = self.kandidat_belum_verif(guild)
+        if not kandidat:
+            return
+
+        channel = await self.resolve_channel(self.pos_satpam_id)
+        if channel is None:
+            return
+
+        disebut = await self.sudah_disebut_bot(channel)
+        if disebut is None:
+            return
+
+        terkirim = 0
+        for member in sorted(kandidat, key=lambda m: m.joined_at):
+            if member.id in disebut:
+                continue
+            if terkirim >= HALT_SWEEP_MAX_PER_RUN:
+                print(f"⏭️ [SWEEP] Batas {HALT_SWEEP_MAX_PER_RUN} pesan/putaran tercapai, "
+                      f"sisanya lanjut 10 menit lagi.")
+                break
+            print(f"🔁 [SWEEP] {member} join {member.joined_at:%d/%m %H:%M} UTC tapi belum "
+                  f"pernah dapat instruksi upload — dikirim sekarang.")
+            if await self.kirim_gate_lengkap(member, is_retry=False):
+                terkirim += 1
+            await asyncio.sleep(2)  # santai, jangan kena rate limit Discord
+
+        if terkirim:
+            print(f"✅ [SWEEP] {terkirim} member disusulkan instruksi upload SKL.")
+
+    @sweep_halt_terlewat.before_loop
+    async def before_sweep_halt(self):
+        await self.bot.wait_until_ready()
+        # Beri jeda supaya cache member sempat penuh (chunking) sebelum sweep pertama.
+        await asyncio.sleep(30)
+
+    # ==============================================================
+    # DIAGNOSA GERBANG — jalankan kalau pesan HALT nggak muncul
+    # ==============================================================
+    @commands.command(name="cekgate")
+    @commands.has_permissions(administrator=True)
+    async def cekgate(self, ctx):
+        """Laporan kesehatan pesan HALT di room regis (read-only)."""
+        guild = ctx.guild
+        me = guild.me
+        lines = []
+
+        intents_members = self.bot.intents.members
+        lines.append(f"{'✅' if intents_members else '❌'} Intent **Server Members**: "
+                     f"{intents_members}"
+                     + ("" if intents_members else " → `on_member_join` NGGAK AKAN pernah jalan"))
+
+        channel = await self.resolve_channel(self.pos_satpam_id)
+        if channel is None:
+            lines.append(f"❌ Room regis ID `{self.pos_satpam_id}` **tidak ditemukan** — "
+                         f"room-nya terhapus/diganti? Betulkan `pos_satpam_id` di autogate.py")
+        else:
+            lines.append(f"✅ Room regis: {channel.mention} (`{channel.name}`)")
+
+            p = channel.permissions_for(me)
+            for nama, ada, catatan in (
+                ("View Channel", p.view_channel, "bot nggak bisa lihat room"),
+                ("Send Messages", p.send_messages, "pesan HALT gagal terkirim"),
+                ("Embed Links", p.embed_links, "embed tutorial hilang"),
+                ("Attach Files", p.attach_files, "gambar tutorial gagal, kirim jadi Forbidden"),
+                ("Read Message History", p.read_message_history, "anti-duplikat & sweep mati"),
+                ("Manage Messages", p.manage_messages, "chat nyasar nggak bisa dihapus"),
+            ):
+                lines.append(f"{'✅' if ada else '❌'} Bot — **{nama}**"
+                             + ("" if ada else f" → {catatan}"))
+
+            pe = channel.permissions_for(guild.default_role)
+            lines.append("")
+            lines.append(f"👥 @everyone — View Channel: {'✅' if pe.view_channel else '❌'}, "
+                         f"Attach Files: {'✅' if pe.attach_files else '❌'}, "
+                         f"Read Message History: {'✅' if pe.read_message_history else '❌'}")
+            if not pe.read_message_history:
+                lines.append("⚠️ **Read Message History ditutup untuk @everyone.** Pesan HALT "
+                             "tetap terkirim (admin lihat), tapi user baru membuka room dalam "
+                             "keadaan KOSONG. Nyalakan permission itu, atau andalkan DM cadangan.")
+            if not pe.attach_files:
+                lines.append("⚠️ **Attach Files ditutup untuk @everyone** — user nggak bisa "
+                             "upload SKL sama sekali.")
+
+        asset_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "assets", "tutorial_upload.png"
+        )
+        lines.append("")
+        lines.append(f"{'✅' if os.path.isfile(asset_path) else '❌'} Asset tutorial: "
+                     f"`{asset_path}`")
+
+        screening = "MEMBER_VERIFICATION_GATE_ENABLED" in guild.features
+        lines.append(f"{'⚠️' if screening else '✅'} Rules Screening: "
+                     f"{'AKTIF — instruksi dikirim setelah member setuju rules' if screening else 'nonaktif'}")
+
+        kandidat = self.kandidat_belum_verif(guild)
+        belum = []
+        if channel is not None and kandidat:
+            disebut = await self.sudah_disebut_bot(channel)
+            if disebut is not None:
+                belum = [m for m in kandidat if m.id not in disebut]
+
+        lines.append("")
+        lines.append(f"🕵️ Member 24 jam terakhir yang belum punya role MEMBER: "
+                     f"**{len(kandidat)}**")
+        if belum:
+            lines.append(f"⏳ Belum pernah dapat instruksi (bakal disusul sweep ≤10 menit): "
+                         f"**{len(belum)}**")
+            for m in belum[:10]:
+                lines.append(f"• {m.mention} (join {m.joined_at:%d/%m %H:%M} UTC)")
+        lines.append(f"🔄 Sweep berjalan: {'✅' if self.sweep_halt_terlewat.is_running() else '❌'}")
+
+        embed = discord.Embed(
+            title="🚧 Diagnosa Gerbang Verifikasi",
+            description="\n".join(lines)[:4000],
+            color=discord.Color.blurple()
+        )
+        embed.set_footer(text="Paksa kirim ulang ke satu orang: !kirimhalt @user")
+        await ctx.send(embed=embed)
+
+    @commands.command(name="kirimhalt")
+    @commands.has_permissions(administrator=True)
+    async def kirimhalt(self, ctx, member: discord.Member = None):
+        """Paksa kirim ulang instruksi upload SKL ke satu member."""
+        if member is None:
+            await ctx.send("❌ Pakai: `!kirimhalt @user`")
+            return
+        ok = await self.kirim_gate_lengkap(member, is_retry=False, paksa_dm=True)
+        await ctx.send(
+            f"{'✅' if ok else '⚠️'} Instruksi upload untuk {member.mention} "
+            f"{'terkirim ke room regis' if ok else 'GAGAL masuk room regis — cek `!cekgate`'} "
+            f"(DM juga dicoba)."
+        )
 
     @commands.Cog.listener()
     async def on_message(self, message):
