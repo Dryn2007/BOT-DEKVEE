@@ -1,17 +1,28 @@
+import asyncio
 import time
 
 import discord
 from discord.ext import commands, tasks
 
-from roomconfig import LOG_CHANNEL_ID, is_private_call
+from cogs.autogate import ROLE_IDS
+from roomconfig import LOG_CHANNEL_ID, PRODI_CHAT_ROOMS, is_private_call
 
 # ====================================================================
 # 0. KONFIGURASI (gampang di-tuning saat testing)
 # ====================================================================
-VOICE_LIMIT_SECONDS = 3600      # Batas maksimal nongkrong di voice (1 jam)
-WARN_BEFORE_SECONDS = 120       # Diingatkan 2 menit sebelum dikeluarkan
+VOICE_LIMIT_SECONDS = 3600      # Umur maksimal satu sesi room voice (1 jam)
+WARN_BEFORE_SECONDS = 120       # Room diingatkan 2 menit sebelum dikosongkan
 CHECK_INTERVAL_SECONDS = 15     # Presisi peringatan/kick jadi ±15 detik
 SKIP_ROOM_PRIVAT = True         # True = room privat bebas, nggak ada batas waktu
+MAX_TULIS_NAMA = 15             # Batas mention/nama yang ditulis dalam 1 pesan
+
+# ID role prodi -> ID room chat prodi. ID role diambil dari ROLE_IDS (autogate)
+# dan ID room chat dari roomconfig, jadi nggak ada ID yang disalin dua kali.
+PRODI_ROLE_TO_CHAT = {
+    ROLE_IDS[key]: chat_id
+    for key, chat_id in PRODI_CHAT_ROOMS.items()
+    if key in ROLE_IDS
+}
 
 
 def label_durasi(detik) -> str:
@@ -24,22 +35,39 @@ def label_durasi(detik) -> str:
     return f"{max(1, menit)} menit"
 
 
-class VoiceCheck(commands.Cog):
-    """Batas waktu nongkrong di voice: lewat 1 jam, otomatis dikeluarkan.
+def ringkas_nama(items, formatter) -> str:
+    """Gabung daftar member jadi satu baris, dipotong kalau kebanyakan."""
+    if not items:
+        return "—"
+    teks = ", ".join(formatter(x) for x in items[:MAX_TULIS_NAMA])
+    sisa = len(items) - MAX_TULIS_NAMA
+    if sisa > 0:
+        teks += f" (+{sisa} member lain)"
+    return teks
 
-    Nggak ada soal/verifikasi apa pun — yang dihitung murni lama duduk di
-    voice, nggak peduli mic/suaranya nyala atau nggak. 2 menit sebelum batas
-    waktu ada peringatan di chat voice ("jangan terlalu lama di voice"), pas
-    batasnya habis member di-disconnect (dapat DM + log admin) dan boleh join
-    lagi kapan aja — begitu join lagi hitungannya mulai dari nol.
+
+class VoiceCheck(commands.Cog):
+    """Batas umur room voice: lewat 1 jam, seisi room dikeluarkan bareng.
+
+    Yang dihitung UMUR ROOM (sejak room kosong lalu mulai ada orang), bukan
+    durasi tiap orang. Versi lama menghitung per member, jadi kick-nya nyicil
+    satu-satu dan selalu ada yang masih nyangkut di room — call-nya nggak
+    pernah selesai dan timer room di Discord nggak pernah balik ke 0. Sekarang
+    pas batas waktunya habis SEMUA member di room itu di-disconnect bersamaan,
+    room jadi benar-benar kosong dan timernya reset ke 0.
+
+    2 menit sebelum batas ada peringatan di chat voice-nya. Setelah room
+    dikosongkan, member dikabari di ROOM CHAT PRODI-nya masing-masing (plus DM
+    + log admin) — biar mereka tetap baca walau udah nggak di voice. Boleh join
+    lagi kapan aja: begitu ada yang masuk, hitungan room mulai dari nol.
 
     Room privat & AFK channel server dikecualikan (lihat SKIP_ROOM_PRIVAT).
     """
 
     def __init__(self, bot):
         self.bot = bot
-        # member_id -> {"channel_id": int, "since": float, "warned": bool}
-        self.tracked = {}
+        # channel_id -> {"since": float, "warned": bool}
+        self.rooms = {}
         self.is_started = False
 
     def cog_unload(self):
@@ -60,10 +88,55 @@ class VoiceCheck(commands.Cog):
             return False
         return True
 
-    def is_tracked(self, member, voice_state) -> bool:
-        if member is None or member.bot:
-            return False
-        return self.is_watched_channel(getattr(voice_state, "channel", None))
+    def anggota_room(self, channel):
+        """Member manusia yang ada di room (bot nggak dihitung)."""
+        if channel is None:
+            return []
+        return [m for m in channel.members if not m.bot]
+
+    def sync_room(self, channel):
+        """Mulai / hapus hitungan umur room sesuai isi room sekarang."""
+        if channel is None:
+            return
+
+        # Room kosong (atau nggak dipantau) = sesi selesai, hitungan balik nol.
+        if not self.is_watched_channel(channel) or not self.anggota_room(channel):
+            self.rooms.pop(channel.id, None)
+            return
+
+        # Room yang udah jalan nggak di-reset cuma karena ada orang masuk/keluar
+        # — yang dihitung umur sesi room-nya, bukan durasi per orang.
+        if channel.id not in self.rooms:
+            self.rooms[channel.id] = {"since": time.time(), "warned": False}
+
+    def reset_hitungan(self, channel_id):
+        """Dipakai kalau room gagal dikosongkan: jangan nyoba lagi tiap 15 detik."""
+        data = self.rooms.get(channel_id)
+        if data is None:
+            return
+        data["since"] = time.time()
+        data["warned"] = False
+
+    def chat_prodi(self, member):
+        """Room chat prodi si member (None kalau prodinya belum punya room chat)."""
+        for role in getattr(member, "roles", []):
+            chat_id = PRODI_ROLE_TO_CHAT.get(role.id)
+            if chat_id:
+                channel = self.bot.get_channel(chat_id)
+                if channel is not None:
+                    return channel
+        return None
+
+    def kelompokkan_per_prodi(self, members):
+        """-> ({room_chat_prodi: [member, ...]}, [member tanpa room prodi])."""
+        per_prodi, tanpa_prodi = {}, []
+        for member in members:
+            chat = self.chat_prodi(member)
+            if chat is None:
+                tanpa_prodi.append(member)
+            else:
+                per_prodi.setdefault(chat, []).append(member)
+        return per_prodi, tanpa_prodi
 
     async def log_to_admin(self, title, description, color):
         log_channel = self.bot.get_channel(LOG_CHANNEL_ID)
@@ -76,47 +149,17 @@ class VoiceCheck(commands.Cog):
         except Exception:
             pass
 
-    def sync_member(self, member, voice_state):
-        """Mulai / lanjutkan / hapus hitungan durasi voice member."""
-        if not self.is_tracked(member, voice_state):
-            self.tracked.pop(member.id, None)
-            return
-
-        data = self.tracked.get(member.id)
-        if data is None:
-            self.tracked[member.id] = {
-                "channel_id": voice_state.channel.id,
-                "since": time.time(),
-                "warned": False,
-            }
-            return
-
-        # Pindah room dihitung sebagai lanjutan sesi yang sama, biar batas
-        # 1 jam nggak bisa di-reset cuma dengan pindah-pindah channel.
-        data["channel_id"] = voice_state.channel.id
-
-    def reset_hitungan(self, member):
-        """Dipakai kalau kick gagal: jangan nyoba lagi tiap 15 detik."""
-        data = self.tracked.get(member.id)
-        if data is None:
-            return
-        data["since"] = time.time()
-        data["warned"] = False
-
     # ----------------------------------------------------------------
     # EVENT
     # ----------------------------------------------------------------
     @commands.Cog.listener()
     async def on_ready(self):
-        # State nggak disimpan ke DB, jadi setelah restart hitungan dimulai
+        # State nggak disimpan ke DB, jadi setelah restart umur room dihitung
         # lagi dari bot ready.
-        self.tracked.clear()
+        self.rooms.clear()
         for guild in self.bot.guilds:
             for vc in guild.voice_channels:
-                if not self.is_watched_channel(vc):
-                    continue
-                for member in vc.members:
-                    self.sync_member(member, member.voice)
+                self.sync_room(vc)
 
         if not self.is_started:
             self.is_started = True
@@ -127,7 +170,11 @@ class VoiceCheck(commands.Cog):
     async def on_voice_state_update(self, member, before, after):
         if member.bot:
             return
-        self.sync_member(member, after)
+
+        # Dua-duanya di-sync: room yang ditinggalkan bisa jadi kosong (hitungan
+        # dihapus), room yang dimasuki bisa jadi mulai sesi baru.
+        for channel in (getattr(before, "channel", None), getattr(after, "channel", None)):
+            self.sync_room(channel)
 
     # ----------------------------------------------------------------
     # LOOP PENGAWAS
@@ -136,42 +183,41 @@ class VoiceCheck(commands.Cog):
     async def voice_check_task(self):
         now = time.time()
 
-        for member_id, data in list(self.tracked.items()):
-            channel = self.bot.get_channel(data["channel_id"])
-            if not isinstance(channel, discord.VoiceChannel):
-                self.tracked.pop(member_id, None)
+        for channel_id, data in list(self.rooms.items()):
+            channel = self.bot.get_channel(channel_id)
+            if not isinstance(channel, discord.VoiceChannel) or not self.is_watched_channel(channel):
+                self.rooms.pop(channel_id, None)
                 continue
 
-            member = channel.guild.get_member(member_id)
-            # Baca state LIVE, jangan percaya cache internal cog
-            if member is None or not self.is_tracked(member, member.voice):
-                self.tracked.pop(member_id, None)
+            # Baca isi room LIVE, jangan percaya cache internal cog
+            members = self.anggota_room(channel)
+            if not members:
+                self.rooms.pop(channel_id, None)
                 continue
-            if member.voice.channel.id != data["channel_id"]:
-                self.sync_member(member, member.voice)
-                channel = member.voice.channel   # peringatan/kick ke room terbaru
 
             elapsed = now - data["since"]
 
             if elapsed >= VOICE_LIMIT_SECONDS:
-                await self.keluarkan(member, channel, elapsed)
+                await self.kosongkan_room(channel, members, elapsed)
             elif elapsed >= (VOICE_LIMIT_SECONDS - WARN_BEFORE_SECONDS) and not data["warned"]:
                 data["warned"] = True
-                await self.kirim_peringatan(member, channel)
+                await self.kirim_peringatan(channel, members)
 
     @voice_check_task.before_loop
     async def before_voice_check(self):
         await self.bot.wait_until_ready()
 
     # ----------------------------------------------------------------
-    # PERINGATAN & KELUARKAN
+    # PERINGATAN SEBELUM ROOM DIKOSONGKAN
     # ----------------------------------------------------------------
-    async def kirim_peringatan(self, member, channel):
+    async def kirim_peringatan(self, channel, members):
         try:
             await channel.send(
-                f"⏳ {member.mention} kamu udah hampir **{label_durasi(VOICE_LIMIT_SECONDS)}** di voice. "
-                f"**{label_durasi(WARN_BEFORE_SECONDS)} lagi** kamu otomatis dikeluarkan — "
-                f"jangan terlalu lama di voice ya.\n"
+                f"⏳ {ringkas_nama(members, lambda m: m.mention)}\n"
+                f"Room ini udah hampir **{label_durasi(VOICE_LIMIT_SECONDS)}** jalan. "
+                f"**{label_durasi(WARN_BEFORE_SECONDS)} lagi** semua yang ada di sini "
+                f"otomatis dikeluarkan bareng biar room-nya kosong lagi — jangan terlalu "
+                f"lama di voice ya.\n"
                 f"*Santai, habis keluar boleh langsung join lagi kok.*",
                 delete_after=WARN_BEFORE_SECONDS + 60,
             )
@@ -180,68 +226,112 @@ class VoiceCheck(commands.Cog):
             pass
 
         # Chat voice-nya nggak bisa dipakai (izin/dimatikan) -> coba lewat DM
+        await asyncio.gather(*(self.dm_peringatan(m, channel) for m in members))
+
+    async def dm_peringatan(self, member, channel):
         try:
             await member.send(
-                f"⏳ **{label_durasi(WARN_BEFORE_SECONDS)} lagi** kamu otomatis dikeluarkan dari voice "
-                f"**{channel.name}** (server **{channel.guild.name}**) karena udah hampir "
-                f"**{label_durasi(VOICE_LIMIT_SECONDS)}** di voice. Jangan terlalu lama di voice ya!"
+                f"⏳ **{label_durasi(WARN_BEFORE_SECONDS)} lagi** kamu otomatis dikeluarkan "
+                f"dari voice **{channel.name}** (server **{channel.guild.name}**) karena "
+                f"room itu udah hampir **{label_durasi(VOICE_LIMIT_SECONDS)}** jalan. "
+                f"Jangan terlalu lama di voice ya!"
             )
         except Exception:
             pass
 
-    async def keluarkan(self, member, channel, elapsed):
+    # ----------------------------------------------------------------
+    # KOSONGKAN ROOM (SEMUA MEMBER SEKALIGUS)
+    # ----------------------------------------------------------------
+    async def kosongkan_room(self, channel, members, elapsed):
         menit = int(elapsed // 60)
-        alasan = f"Batas waktu voice {label_durasi(VOICE_LIMIT_SECONDS)} habis ({menit} menit)"
+        alasan = (
+            f"Room udah {label_durasi(VOICE_LIMIT_SECONDS)} jalan ({menit} menit) "
+            f"— seisi room dikeluarkan biar timernya balik ke 0"
+        )
 
+        # Semua sekaligus, bukan satu-satu: kalau nyicil, selalu ada yang
+        # tertinggal di room dan call-nya nggak pernah benar-benar selesai.
+        hasil = await asyncio.gather(*(self.keluarkan_satu(m, alasan) for m in members))
+        keluar = [m for m, ok, _ in hasil if ok]
+        gagal = [(m, sebab) for m, ok, sebab in hasil if not ok]
+
+        if gagal:
+            # Masih ada yang nyangkut -> jangan spam percobaan tiap 15 detik
+            self.reset_hitungan(channel.id)
+        else:
+            self.rooms.pop(channel.id, None)
+
+        if keluar:
+            await self.kabari_prodi(channel, keluar, menit)
+            await asyncio.gather(*(self.dm_keluar(m, channel, menit) for m in keluar))
+
+        await self.log_kosongkan(channel, menit, keluar, gagal)
+
+    async def keluarkan_satu(self, member, alasan):
+        """Disconnect satu member. -> (member, berhasil, sebab_gagal)."""
         try:
             await member.move_to(None, reason=alasan)
         except discord.Forbidden:
-            self.reset_hitungan(member)
-            await self.gagal_keluarkan(member, channel, "Bot tidak punya izin **Move Members**.")
-            return
+            return member, False, "bot nggak punya izin **Move Members** (atau role member lebih tinggi)"
         except Exception as e:
-            self.reset_hitungan(member)
-            await self.gagal_keluarkan(member, channel, f"Error: `{e!r}`")
-            return
+            return member, False, f"error `{e!r}`"
+        return member, True, None
 
-        self.tracked.pop(member.id, None)
+    async def kabari_prodi(self, voice_channel, members, menit):
+        """Kabari member di room chat prodinya masing-masing."""
+        per_prodi, tanpa_prodi = self.kelompokkan_per_prodi(members)
 
-        # Notifikasi publik di chat voice
+        for chat, anggota in per_prodi.items():
+            await self.kirim_kabar(chat, voice_channel, anggota, menit)
+
+        # Prodinya belum punya room chat -> kabari di chat voice-nya aja
+        if tanpa_prodi:
+            await self.kirim_kabar(voice_channel, voice_channel, tanpa_prodi, menit)
+
+    async def kirim_kabar(self, tujuan, voice_channel, members, menit):
+        """Pesan "room udah 1 jam" — sengaja nggak auto-delete biar kebaca."""
         try:
-            await channel.send(
-                f"⌛ {member.mention} udah **{label_durasi(VOICE_LIMIT_SECONDS)}** di voice, "
-                f"jadi otomatis dikeluarkan. Jangan terlalu lama di voice ya — "
-                f"mau join lagi tinggal masuk aja. 👋",
-                delete_after=300,
+            await tujuan.send(
+                f"⌛ {ringkas_nama(members, lambda m: m.mention)}\n"
+                f"Voice **{voice_channel.name}** udah jalan **{menit} menit** "
+                f"(batas **{label_durasi(VOICE_LIMIT_SECONDS)}**), jadi room-nya "
+                f"dikosongkan biar timernya bener-bener balik ke 0 — kalian semua "
+                f"dikeluarkan bareng. Jangan terlalu lama di voice ya.\n"
+                f"*Mau lanjut ngobrol? Tinggal join ulang aja, hitungannya mulai "
+                f"dari nol lagi.* 👋"
             )
         except Exception:
             pass
 
+    async def dm_keluar(self, member, channel, menit):
         try:
             await member.send(
-                f"👋 Kamu dikeluarkan dari voice **{channel.name}** di server "
-                f"**{channel.guild.name}** karena udah **{menit} menit** di voice "
-                f"(batasnya {label_durasi(VOICE_LIMIT_SECONDS)}).\n"
+                f"👋 Voice **{channel.name}** di server **{channel.guild.name}** udah "
+                f"jalan **{menit} menit** (batas {label_durasi(VOICE_LIMIT_SECONDS)}), "
+                f"jadi room-nya dikosongkan dan kamu ikut dikeluarkan.\n"
                 "Jangan terlalu lama di voice ya — kamu bisa masuk lagi kapan saja."
             )
         except Exception:
             pass
 
-        await self.log_to_admin(
-            "🕐 Member Dikeluarkan (Batas Waktu Voice)",
-            f"**Member:** {member.mention} (`{member}`)\n"
+    async def log_kosongkan(self, channel, menit, keluar, gagal):
+        deskripsi = (
             f"**Room:** {channel.mention} (`{channel.name}`)\n"
-            f"**Durasi di voice:** {menit} menit "
-            f"(batas {label_durasi(VOICE_LIMIT_SECONDS)})",
-            discord.Color.orange(),
+            f"**Umur room:** {menit} menit (batas {label_durasi(VOICE_LIMIT_SECONDS)})\n"
+            f"**Dikeluarkan ({len(keluar)}):** {ringkas_nama(keluar, lambda m: m.mention)}"
         )
 
-    async def gagal_keluarkan(self, member, channel, sebab):
+        if gagal:
+            rincian = "\n".join(f"• {m.mention} — {sebab}" for m, sebab in gagal[:MAX_TULIS_NAMA])
+            deskripsi += (
+                f"\n**Gagal dikeluarkan ({len(gagal)}):**\n{rincian}\n"
+                f"⚠️ Room belum benar-benar kosong — hitungan di-reset dari sekarang."
+            )
+
         await self.log_to_admin(
-            "⚠️ Gagal Keluarkan dari Voice (Batas Waktu)",
-            f"**Member:** {member.mention}\n**Room:** {channel.mention}\n"
-            f"**Alasan gagal:** {sebab}",
-            discord.Color.dark_red(),
+            f"🕐 Room Dikosongkan (Batas {label_durasi(VOICE_LIMIT_SECONDS)} Voice)",
+            deskripsi,
+            discord.Color.dark_red() if gagal else discord.Color.orange(),
         )
 
     # ----------------------------------------------------------------
@@ -250,40 +340,39 @@ class VoiceCheck(commands.Cog):
     @commands.command(name="voicecek")
     @commands.has_permissions(administrator=True)
     async def voicecek(self, ctx):
-        """Lihat siapa saja yang sedang dihitung durasi voice-nya."""
+        """Lihat room voice mana saja yang umurnya sedang dihitung."""
         try:
             await ctx.message.delete()
         except Exception:
             pass
 
-        embed = discord.Embed(title="🕐 Batas Waktu Voice", color=discord.Color.blurple())
+        embed = discord.Embed(title="🕐 Batas Waktu Room Voice", color=discord.Color.blurple())
         embed.set_footer(
-            text=f"Batas {label_durasi(VOICE_LIMIT_SECONDS)} "
-                 f"• diingatkan {label_durasi(WARN_BEFORE_SECONDS)} sebelum out "
+            text=f"Batas {label_durasi(VOICE_LIMIT_SECONDS)} per room "
+                 f"• diingatkan {label_durasi(WARN_BEFORE_SECONDS)} sebelum dikosongkan "
                  f"• cek tiap {CHECK_INTERVAL_SECONDS} detik"
         )
 
-        if not self.tracked:
-            embed.description = "Nggak ada member di voice channel yang dibatasi."
+        if not self.rooms:
+            embed.description = "Nggak ada room voice aktif yang dibatasi."
         else:
             now = time.time()
             baris = []
-            for member_id, data in self.tracked.items():
-                channel = self.bot.get_channel(data["channel_id"])
-                member = (
-                    channel.guild.get_member(member_id)
-                    if isinstance(channel, discord.VoiceChannel) else None
-                )
-                nama = member.display_name if member else f"ID: {member_id}"
-                nama_room = channel.name if channel else "Unknown"
+            for channel_id, data in self.rooms.items():
+                channel = self.bot.get_channel(channel_id)
+                nama_room = channel.name if channel else f"ID: {channel_id}"
+                jumlah = len(self.anggota_room(channel))
 
-                menit = int((now - data["since"]) // 60)
-                sisa = max(0, int((VOICE_LIMIT_SECONDS - (now - data["since"])) // 60))
+                umur = now - data["since"]
+                menit = int(umur // 60)
+                sisa = max(0, int((VOICE_LIMIT_SECONDS - umur) // 60))
                 tanda = "⚠️ udah diingatkan" if data["warned"] else f"sisa ±{sisa} menit"
-                baris.append(f"👤 **{nama}** — `{nama_room}` — **{menit} menit** — {tanda}")
+                baris.append(
+                    f"🔊 **{nama_room}** — {jumlah} member — **{menit} menit** — {tanda}"
+                )
 
             if len(baris) > 25:
-                baris = baris[:25] + [f"*...dan {len(baris) - 25} member lainnya*"]
+                baris = baris[:25] + [f"*...dan {len(baris) - 25} room lainnya*"]
             embed.description = "\n".join(baris)
 
         await ctx.send(embed=embed, delete_after=60)
