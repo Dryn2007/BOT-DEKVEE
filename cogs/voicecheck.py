@@ -169,8 +169,6 @@ class VoiceCheck(commands.Cog):
             await log_channel.send(embed=embed)
         except Exception:
             pass
-
-
     # ----------------------------------------------------------------
     # STATE
     # ----------------------------------------------------------------
@@ -221,8 +219,6 @@ class VoiceCheck(commands.Cog):
             # pengawas bakal nanya ulang di room yang baru.
             data["channel_id"] = voice_state.channel.id
             await self.bersihkan_soal(data)
-
-
     # ----------------------------------------------------------------
     # EVENT
     # ----------------------------------------------------------------
@@ -288,8 +284,6 @@ class VoiceCheck(commands.Cog):
     @voice_check_task.before_loop
     async def before_voice_check(self):
         await self.bot.wait_until_ready()
-
-
     # ----------------------------------------------------------------
     # KIRIM SOAL & PERINGATAN
     # ----------------------------------------------------------------
@@ -370,8 +364,6 @@ class VoiceCheck(commands.Cog):
             )
         except Exception:
             pass
-
-
     # ----------------------------------------------------------------
     # KELUARKAN DARI VOICE
     # ----------------------------------------------------------------
@@ -431,8 +423,6 @@ class VoiceCheck(commands.Cog):
             f"**Alasan gagal:** {sebab}",
             discord.Color.dark_red(),
         )
-
-
     # ----------------------------------------------------------------
     # PROSES JAWABAN
     # ----------------------------------------------------------------
@@ -510,8 +500,6 @@ class VoiceCheck(commands.Cog):
             )
         except Exception:
             pass
-
-
     @commands.Cog.listener()
     async def on_message(self, message):
         """Jawaban yang diketik langsung di chat (nggak semua orang mau klik tombol)."""
@@ -563,8 +551,6 @@ class VoiceCheck(commands.Cog):
             )
         except Exception:
             pass
-
-
     # ----------------------------------------------------------------
     # COMMAND DIAGNOSA
     # ----------------------------------------------------------------
@@ -615,8 +601,6 @@ class VoiceCheck(commands.Cog):
             embed.description = "\n".join(baris)
 
         await ctx.send(embed=embed, delete_after=60)
-
-
     @commands.command(name="voicesoal")
     @commands.has_permissions(administrator=True)
     async def voicesoal(self, ctx, member: discord.Member = None):
