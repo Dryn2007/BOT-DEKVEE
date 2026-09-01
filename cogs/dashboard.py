@@ -2,7 +2,9 @@ import discord
 from discord.ext import commands, tasks
 from datetime import datetime, timedelta, timezone
 
-STATS_CHANNEL_ID = 1526614764799922236 
+from roomconfig import ROLE_IDS, PRODI_ROLE_KEYS
+
+STATS_CHANNEL_ID = 1526614764799922236
 WIB = timezone(timedelta(hours=7))
 
 class Dashboard(commands.Cog):
@@ -24,12 +26,19 @@ class Dashboard(commands.Cog):
         if not channel: return
         guild = channel.guild
 
-        prodi_roles = ["DKV", "TEKINFO", "SISFOR", "TEKTEL"]
-        
+        # Daftar prodi ikut roomconfig.py, jadi prodi baru otomatis muncul di sini.
+        prodi_roles = list(PRODI_ROLE_KEYS)
+
+        # Role dicari pakai ID dulu (anti typo/ganti nama), nama cuma jadi cadangan.
+        def cari_role(role_key):
+            role_id = ROLE_IDS.get(role_key)
+            role = guild.get_role(role_id) if role_id else None
+            return role or discord.utils.get(guild.roles, name=role_key)
+
         # 1. Hitung Populasi
         member_counts = {}
         for role_name in prodi_roles:
-            role = discord.utils.get(guild.roles, name=role_name)
+            role = cari_role(role_name)
             member_counts[role_name] = len([m for m in role.members if not m.bot]) if role else 0
 
         # 2. Ambil Semua Data Level, XP, & Koin dari Database
@@ -49,7 +58,7 @@ class Dashboard(commands.Cog):
 
         # Fungsi bantuan untuk filter prodi
         def get_top_prodi(sorted_data, role_name, limit=3):
-            role = discord.utils.get(guild.roles, name=role_name)
+            role = cari_role(role_name)
             if not role: return []
             return [data for data in sorted_data if role in data['member'].roles][:limit]
 

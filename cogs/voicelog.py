@@ -5,18 +5,13 @@ import asyncpg
 import os
 import asyncio
 
-from roomconfig import is_private_call
+from roomconfig import is_private_call, PRODI_ROLE_IDS
 
 # ====================================================================
-# KONFIGURASI ROLE PRODI (WAJIB DIISI)
-# Masukkan ID Role untuk masing-masing Prodi (DKV, TEKINFO, dll) di dalam list ini.
+# ROLE PRODI — ID-nya nggak ditulis di sini. Sumber tunggalnya ROLE_IDS /
+# PRODI_ROLE_IDS di roomconfig.py (root repo), jadi prodi baru otomatis
+# ikut kebaca di rekap voice tanpa perlu edit file ini.
 # ====================================================================
-PRODI_ROLE_IDS = [
-    1526565350731284532, # Ganti dengan ID Role Prodi DKV
-    1526566212077879438, # Ganti dengan ID Role Prodi TEKINFO
-    1526566441040478352, # Ganti dengan ID Role Prodi SISFOR
-    1526566818024783872  # Ganti dengan ID Role Prodi TEKTEL
-]
 
 # ====================================================================
 # KATEGORI ROOM PRIVAT — ID-nya dipusatkan di roomconfig.py (root repo),

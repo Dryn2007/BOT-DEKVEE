@@ -8,23 +8,23 @@ import re
 import time
 from collections import deque
 
+from roomconfig import (
+    ROLE_IDS,
+    PRODI_ROLE_KEYS,
+    PRODI_CHAT_ROOMS,
+    prodi_room_mention,
+)
+
 # Ambil API key dari .env
 gemini_key = os.getenv("GEMINI_API_KEY")
 
 
 # ==========================================
-# 0. KONFIGURASI ROLE  <<< SATU-SATUNYA TEMPAT EDIT ID ROLE >>>
+# 0. KONFIGURASI ROLE
 # ==========================================
-# PENTING: role dicari pakai ID, BUKAN nama.
-# Nama role gampang keubah/typo di Discord dan bikin verifikasi silent-fail.
-ROLE_IDS = {
-    "MEMBER":  1526575163166949447,                 # TODO: isi ID role MEMBER kamu
-    "TEKINFO": 1526566212077879438,  # S1 Teknologi Informasi
-    "DKV":     1526565350731284532,  # S1 Desain Komunikasi Visual
-    "TEKTEL":  1526566818024783872,  # S1 Teknik Telekomunikasi
-    "INFOR":   1538489249895292951,  # S1 Informatika
-    "SISFOR":  1526566441040478352,                 # TODO: isi ID role Sistem Informasi
-}
+# ID role prodi TIDAK ditulis di sini lagi — sumber tunggalnya ROLE_IDS di
+# roomconfig.py (root repo), supaya prodi baru cukup didaftarkan sekali dan
+# semua cog (voicelog, dashboard, streak) otomatis ikut.
 
 # Keyword prodi -> key di ROLE_IDS.
 # Dicocokkan dengan word-boundary dan diurutkan dari keyword TERPANJANG,
@@ -489,11 +489,39 @@ class AutoGate(commands.Cog):
 
         embed = discord.Embed(
             title="🔧 Diagnosa Konfigurasi Role AutoGate",
-            description="\n".join(lines),
+            description="\n".join(lines + self._diagnosa_room_prodi(guild)),
             color=discord.Color.blurple()
         )
         embed.set_footer(text="Kalau ada 🔒 atau ❌, itu penyebab role prodi nggak masuk.")
         await ctx.send(embed=embed)
+
+    def _diagnosa_room_prodi(self, guild):
+        """Cek tiap prodi: room chat-nya ada? role prodinya bisa lihat room itu?
+
+        Ini yang bikin "user masuk ke room prodinya" beneran jalan — role doang
+        nggak cukup kalau permission room-nya belum ngasih akses ke role itu.
+        """
+        lines = ["", "**Room chat prodi:**"]
+        for key in PRODI_ROLE_KEYS:
+            room_id = PRODI_CHAT_ROOMS.get(key)
+            if room_id is None:
+                lines.append(f"⚠️ `{key}` — belum didaftarkan di PRODI_CHAT_ROOMS (roomconfig.py)")
+                continue
+
+            channel = guild.get_channel(room_id)
+            role_id = ROLE_IDS.get(key)
+            role = guild.get_role(role_id) if role_id else None
+
+            if channel is None:
+                lines.append(f"❌ `{key}` — room ID `{room_id}` nggak ada di server ini")
+            elif role is None:
+                lines.append(f"⚠️ `{key}` — room {channel.mention} ada, tapi role prodinya nggak ketemu")
+            elif channel.permissions_for(role).view_channel:
+                lines.append(f"✅ `{key}` — {channel.mention} bisa dilihat role **{role.name}**")
+            else:
+                lines.append(f"🔒 `{key}` — {channel.mention} ada, tapi role **{role.name}** "
+                             f"belum dikasih izin lihat room ini")
+        return lines
 
     @commands.command(name="cekkelas")
     @commands.has_permissions(administrator=True)
@@ -718,12 +746,15 @@ class AutoGate(commands.Cog):
 
                 if pengumuman_channel and target_key:
                     nama_tampil = full_name.split()[0] if full_name else member.display_name
+                    room_prodi = prodi_room_mention(target_key)
+                    room_prodi_ann = f"\n💬 Room prodinya: {room_prodi}" if room_prodi else ""
                     embed_pengumuman = discord.Embed(
                         title="🎉 MAHASISWA BARU TELAH TIBA!",
                         description=(
                             f"Mari sambut **{nama_tampil}** ({member.mention}) dari prodi "
                             f"**{target_key}** yang baru aja lolos verifikasi gerbang utama via Web!\n"
                             f"Selamat bergabung di kampus, jangan lupa mampir ke kantin virtual!"
+                            f"{room_prodi_ann}"
                         ),
                         color=discord.Color.gold()
                     )
@@ -1647,9 +1678,17 @@ class AutoGate(commands.Cog):
                 )
                 return
 
+            # Room chat prodi ditunjukin langsung supaya user nggak nyari-nyari.
+            room_prodi = prodi_room_mention(role_key)
+            baris_room = (
+                f"💬 Room prodi kamu: {room_prodi} — langsung nimbrung di sana ya!\n"
+                if room_prodi else ""
+            )
+
             acc_msg = await message.channel.send(
                 f"✅ **Verifikasi Berhasil!** Halo **{nama_depan}** {message.author.mention}, "
                 f"dokumen SKL lu lolos untuk prodi **{role_key}**. Cuss cek room welcome-center!\n"
+                f"{baris_room}"
                 f"🎓 Mau dapet **role kelas** (mis. `JS1DKV-26-REG-01`)? Pilih kelasmu di "
                 f"**Website Resmi Telyu Jekardah** — role-nya nempel otomatis dalam 1 menit. "
                 f"Pilih dengan teliti ya, **kelas itu permanen** dan cuma bisa dibetulkan Admin."
@@ -1669,12 +1708,14 @@ class AutoGate(commands.Cog):
                     pass
 
             if pengumuman_channel:
+                room_prodi_ann = f"\n💬 Room prodinya: {room_prodi}" if room_prodi else ""
                 embed_pengumuman = discord.Embed(
                     title="🎉 MAHASISWA BARU TELAH TIBA!",
                     description=(
                         f"Mari sambut **{nama_depan}** ({message.author.mention}) dari prodi "
                         f"**{role_key}** yang baru aja lolos verifikasi gerbang utama!\n"
                         f"Selamat bergabung di kampus, jangan lupa mampir ke kantin virtual!"
+                        f"{room_prodi_ann}"
                     ),
                     color=discord.Color.gold()
                 )
