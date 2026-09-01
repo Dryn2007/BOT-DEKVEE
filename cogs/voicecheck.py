@@ -15,6 +15,7 @@ WARN_BEFORE_SECONDS = 120       # Room diingatkan 2 menit sebelum dikosongkan
 CHECK_INTERVAL_SECONDS = 15     # Presisi peringatan/kick jadi ±15 detik
 SKIP_ROOM_PRIVAT = True         # True = room privat bebas, nggak ada batas waktu
 MAX_TULIS_NAMA = 15             # Batas mention/nama yang ditulis dalam 1 pesan
+KABAR_HILANG_SETELAH = 300      # Kabar di chat prodi auto-hapus (5 menit)
 
 # ID role prodi -> ID room chat prodi. ID role diambil dari ROLE_IDS (autogate)
 # dan ID room chat dari roomconfig, jadi nggak ada ID yang disalin dua kali.
@@ -57,9 +58,10 @@ class VoiceCheck(commands.Cog):
     room jadi benar-benar kosong dan timernya reset ke 0.
 
     2 menit sebelum batas ada peringatan di chat voice-nya. Setelah room
-    dikosongkan, member dikabari di ROOM CHAT PRODI-nya masing-masing (plus DM
-    + log admin) — biar mereka tetap baca walau udah nggak di voice. Boleh join
-    lagi kapan aja: begitu ada yang masuk, hitungan room mulai dari nol.
+    dikosongkan, member dikabari di ROOM CHAT PRODI-nya masing-masing — pesannya
+    auto-hapus setelah KABAR_HILANG_SETELAH biar chat prodi nggak kepenuhan,
+    catatan permanennya ada di DM member + log admin. Boleh join lagi kapan aja:
+    begitu ada yang masuk, hitungan room mulai dari nol.
 
     Room privat & AFK channel server dikecualikan (lihat SKIP_ROOM_PRIVAT).
     """
@@ -289,7 +291,7 @@ class VoiceCheck(commands.Cog):
             await self.kirim_kabar(voice_channel, voice_channel, tanpa_prodi, menit)
 
     async def kirim_kabar(self, tujuan, voice_channel, members, menit):
-        """Pesan "room udah 1 jam" — sengaja nggak auto-delete biar kebaca."""
+        """Pesan "room udah 1 jam" — auto-hapus biar chat prodi nggak penuh."""
         try:
             await tujuan.send(
                 f"⌛ {ringkas_nama(members, lambda m: m.mention)}\n"
@@ -298,7 +300,8 @@ class VoiceCheck(commands.Cog):
                 f"dikosongkan biar timernya bener-bener balik ke 0 — kalian semua "
                 f"dikeluarkan bareng. Jangan terlalu lama di voice ya.\n"
                 f"*Mau lanjut ngobrol? Tinggal join ulang aja, hitungannya mulai "
-                f"dari nol lagi.* 👋"
+                f"dari nol lagi.* 👋",
+                delete_after=KABAR_HILANG_SETELAH,
             )
         except Exception:
             pass
