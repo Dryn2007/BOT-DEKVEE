@@ -10,18 +10,17 @@ from PIL import Image
 # --- IMPORT PLUGIN DARI LUAR ---
 from easy_pil import Editor, Canvas, Font
 
+from roomconfig import PRODI_CHAT_ROOMS
+
 # ====================================================================
 # KONFIGURASI STREAK API
 # ====================================================================
 STREAK_ANNOUNCEMENT_ID = 1528376317756571648 # Ganti dengan ID Room Pengumuman Streak
 
-# Ganti dengan ID Room Chat masing-masing Prodi
-PRODI_ROOMS = {
-    1526599646674161736: "DKV",
-    1526601262861389964: "TEKINFO",
-    1526606411591585932: "SISFOR",
-    1526607541310591028: "TEKTEL"
-}
+# ID Room Chat masing-masing Prodi -> nama prodi.
+# ID-nya nggak ditulis di sini: sumber tunggalnya PRODI_CHAT_ROOMS di
+# roomconfig.py, ini cuma kebalikan mapping-nya.
+PRODI_ROOMS = {chat_id: nama for nama, chat_id in PRODI_CHAT_ROOMS.items()}
 
 MILESTONES = [3, 10, 30, 100, 200, 300, 400]
 WIB = timezone(timedelta(hours=7))

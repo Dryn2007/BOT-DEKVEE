@@ -16,6 +16,22 @@ PRIVATE_CALL_CATEGORY_ID = 1528284380022313011
 # user ditambahkan, user dikick karena AFK, dst).
 LOG_CHANNEL_ID = 1534469424084418600
 
+# ====================================================================
+# ROOM CHAT PER PRODI — SUMBER TUNGGAL
+# --------------------------------------------------------------------
+# Key-nya sama dengan key role di ROLE_IDS (cogs/autogate.py), value-nya ID
+# room chat prodi tersebut. Dipakai streak.py (hitung streak chat harian).
+#
+# Prodi yang belum punya room chat sendiri (mis. INFOR) sengaja nggak
+# didaftarkan.
+# ====================================================================
+PRODI_CHAT_ROOMS = {
+    "DKV":     1526599646674161736,
+    "TEKINFO": 1526601262861389964,
+    "SISFOR":  1526606411591585932,
+    "TEKTEL":  1526607541310591028,
+}
+
 
 def is_private_call(channel) -> bool:
     """True kalau channel berada di kategori room privat (auto private call)."""
