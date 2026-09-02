@@ -3,6 +3,8 @@ from discord.ext import commands, tasks
 import oci
 import asyncio
 import socket
+import ssl
+import platform
 import time
 import re
 from datetime import datetime, timedelta, timezone
@@ -40,6 +42,8 @@ LOOP_MINUTES = 2
 PETUNJUK_JARINGAN_SETELAH = 5     # gagal jaringan berturut-turut sebelum kasih petunjuk
 MAX_DETAIL_CHAR = 350             # potong detail error biar pesan Discord nggak kepanjangan
 PROBE_TIMEOUT = 10.0              # timeout cek TCP mentah di !ceknet (biar cepat jawabnya)
+PROBE_READ_TIMEOUT = 12.0         # timeout nunggu balasan HTTP di probe !ceknet
+MSS_CLAMP = 1200                  # ukuran segmen TCP buat nguji dugaan MTU blackhole
 
 # Hati-hati: `oci.exceptions.RequestException` TIDAK menangkap `ConnectTimeout`.
 # Keduanya sama-sama turunan requests bawaan SDK (`BaseRequestException`), tapi
@@ -185,14 +189,111 @@ def _host_endpoint():
     return f"iaas.{wilayah}.oraclecloud.com"
 
 
-def _diagnosa_jaringan():
-    """Cek jalur ke Oracle DARI host tempat bot jalan: DNS -> TCP 443 -> API.
+def _info_host():
+    """Rangkuman host + setelan efektif klien, biar nggak nebak-nebak versi."""
+    timeout = getattr(compute_client.base_client, "timeout", None) if compute_client else None
+    return (
+        f"🧰 `{platform.system()} {platform.machine()}` · Python `{platform.python_version()}` "
+        f"· oci `{getattr(oci, '__version__', '?')}` · timeout klien `{timeout}`"
+    )
 
-    Gunanya misahin tiga kemungkinan yang gejalanya sama-sama "timeout":
-    resolver DNS host, egress host ke port 443, atau kredensial/Oracle-nya.
+
+def _bikin_socket(ip, mss=None, timeout=PROBE_TIMEOUT):
+    """Socket TCP ke port 443, opsional dengan MSS diclamp (khusus Linux).
+
+    Clamp MSS dipakai buat nguji MTU blackhole: kalau paket kecil lolos tapi
+    paket penuh hilang, TLS/HTTP-nya nyangkut padahal TCP-nya nyambung.
+    """
+    keluarga = socket.AF_INET6 if ":" in ip else socket.AF_INET
+    s = socket.socket(keluarga, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    if mss and hasattr(socket, "TCP_MAXSEG"):
+        try:
+            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_MAXSEG, mss)
+        except OSError:
+            pass  # Windows nolak setelan ini, nggak apa-apa
+    s.connect((ip, 443))
+    return s
+
+
+def _probe_https(host, ip, mss=None):
+    """TLS handshake + satu GET tanpa auth. Return dict fase/durasi/hasil.
+
+    Endpoint Oracle bakal jawab 401 buat request tanpa tanda tangan, dan itu
+    justru yang dicari: balasan kecil yang datang cepat = jalurnya sehat.
+    """
+    hasil = {"fase": "TCP", "tcp": 0.0, "tls": 0.0, "http": 0.0, "info": ""}
+    t0 = time.perf_counter()
+    try:
+        mentah = _bikin_socket(ip, mss=mss)
+    except Exception as e:
+        hasil["tcp"] = time.perf_counter() - t0
+        hasil["info"] = f"{type(e).__name__}: {e}"
+        return hasil
+
+    hasil["tcp"] = time.perf_counter() - t0
+    hasil["fase"] = "TLS"
+    t1 = time.perf_counter()
+    try:
+        with ssl.create_default_context().wrap_socket(mentah, server_hostname=host) as tls:
+            hasil["tls"] = time.perf_counter() - t1
+            hasil["fase"] = "HTTP"
+            t2 = time.perf_counter()
+            tls.settimeout(PROBE_READ_TIMEOUT)
+            tls.sendall(
+                f"GET /20160918/shapes HTTP/1.1\r\nHost: {host}\r\n"
+                f"User-Agent: DekVee-ceknet\r\nAccept: */*\r\nConnection: close\r\n\r\n".encode()
+            )
+            jawaban = b""
+            while b"\r\n" not in jawaban and len(jawaban) < 256:
+                potongan = tls.recv(256)
+                if not potongan:
+                    break
+                jawaban += potongan
+            hasil["http"] = time.perf_counter() - t2
+            hasil["fase"] = "OK"
+            hasil["info"] = jawaban.split(b"\r\n")[0].decode("latin-1", "replace") or "(balasan kosong)"
+    except Exception as e:
+        patokan = t1 if hasil["fase"] == "TLS" else t1 + hasil["tls"]
+        hasil[hasil["fase"].lower()] = time.perf_counter() - patokan
+        hasil["info"] = f"{type(e).__name__}: {e}"
+    finally:
+        try:
+            mentah.close()
+        except Exception:
+            pass
+    return hasil
+
+
+def _baca_probe(hasil, label):
+    """Ubah hasil _probe_https jadi baris laporan yang kebaca di Discord."""
+    if hasil["fase"] == "OK":
+        return [
+            f"✅ TLS+HTTP ({label}): handshake {hasil['tls']:.2f}s, balasan "
+            f"{hasil['http']:.2f}s → `{hasil['info']}`"
+        ]
+    nama = {
+        "TCP": "sambungan TCP",
+        "TLS": "handshake TLS",
+        "HTTP": "nunggu balasan HTTP",
+    }.get(hasil["fase"], hasil["fase"])
+    detik = hasil.get(hasil["fase"].lower(), 0.0)
+    return [
+        f"❌ TLS+HTTP ({label}): mandek di **{nama}** setelah {detik:.2f}s — "
+        f"`{_potong(str(hasil['info']))}`"
+    ]
+
+
+def _diagnosa_jaringan():
+    """Cek jalur ke Oracle DARI host tempat bot jalan, bertahap.
+
+    Urutannya DNS → TCP → TLS+HTTP → API bertanda tangan, biar kelihatan macet
+    di lapisan mana. "Timeout" doang nggak cukup: TCP nyambung tapi balasan
+    HTTP nggak pernah datang itu ciri lain (MTU/blackhole) dibanding port
+    ketutup, dan dua-duanya beda lagi dari kredensial ditolak.
     """
     host = _host_endpoint()
-    baris = [f"🎯 Endpoint: `{host}:443`"]
+    baris = [f"🎯 Endpoint: `{host}:443`", _info_host()]
 
     # 1. DNS
     t = time.perf_counter()
@@ -216,20 +317,20 @@ def _diagnosa_jaringan():
             "gejala connect timeout kayak sekarang."
         )
 
-    # 2. TCP mentah ke 443
-    sukses_tcp = False
-    for _, ip in alamat[:3]:
+    # 2. TCP mentah 2x, biar kelihatan kalau waktunya naik-turun (indikasi loss)
+    ip_utama = alamat[0][1]
+    waktu_tcp = []
+    for _ in range(2):
         t = time.perf_counter()
         try:
-            socket.create_connection((ip, 443), timeout=PROBE_TIMEOUT).close()
-            baris.append(f"✅ TCP ke `{ip}` nyambung dalam {time.perf_counter() - t:.2f}s")
-            sukses_tcp = True
+            _bikin_socket(ip_utama).close()
+            waktu_tcp.append(time.perf_counter() - t)
         except Exception as e:
             baris.append(
-                f"❌ TCP ke `{ip}` gagal setelah {time.perf_counter() - t:.2f}s — "
+                f"❌ TCP ke `{ip_utama}` gagal setelah {time.perf_counter() - t:.2f}s — "
                 f"`{type(e).__name__}: {e}`"
             )
-    if not sukses_tcp:
+    if not waktu_tcp:
         baris.append(
             "→ DNS jalan tapi port 443 nggak kebuka: **egress host bot yang kena blok / "
             "nggak ada rute** ke Oracle. Bukan capacity, bukan kredensial. Solusinya "
@@ -237,7 +338,38 @@ def _diagnosa_jaringan():
         )
         return baris
 
-    # 3. Panggilan API read-only (nggak bikin resource apa pun)
+    catatan = " / ".join(f"{d:.2f}s" for d in waktu_tcp)
+    baris.append(f"✅ TCP ke `{ip_utama}` nyambung ({catatan})")
+    if min(waktu_tcp) > 0.6:
+        baris.append(
+            f"⚠️ Handshake TCP {min(waktu_tcp):.2f}s itu kelewat lama — biasanya ada "
+            f"paket SYN yang hilang dan dikirim ulang. Jalurnya jelek, bukan cuma jauh."
+        )
+
+    # 3. TLS + satu GET tanpa auth: balasan kecil, harusnya cepat dan dijawab 401
+    hasil = _probe_https(host, ip_utama)
+    baris.extend(_baca_probe(hasil, "bawaan"))
+
+    # 3b. Ulang dengan MSS diclamp. Kalau yang ini jalan padahal tadi gagal,
+    #     dugaan MTU blackhole-nya kepegang.
+    if hasil["fase"] != "OK":
+        klamp = _probe_https(host, ip_utama, mss=MSS_CLAMP)
+        baris.extend(_baca_probe(klamp, f"MSS {MSS_CLAMP}"))
+        if klamp["fase"] == "OK":
+            baris.append(
+                f"🎯 **Ketemu:** paket penuh hilang, paket kecil lolos → **MTU/MSS "
+                f"blackhole** di jalur host bot. Bilang aja, saya kunci MSS klien ke "
+                f"{MSS_CLAMP} biar war-nya jalan tanpa pindah host."
+            )
+            return baris
+        baris.append(
+            "→ Diclamp pun tetap mati, jadi bukan sekadar MTU: jalur host bot ke "
+            "Oracle memang nggak bisa dipakai. Paling cepat: jalanin bot dari "
+            "host/jaringan lain (dari komputer kamu endpoint ini kebuka ~0.02s)."
+        )
+        return baris
+
+    # 4. Panggilan API bertanda tangan (read-only, nggak bikin resource apa pun)
     if not OCI_READY:
         baris.append("⚠️ OCI belum dikonfigurasi di host ini, panggilan API dilewat.")
         return baris
@@ -260,6 +392,10 @@ def _diagnosa_jaringan():
         baris.append(
             f"❌ Panggilan API read-only gagal setelah {time.perf_counter() - t:.2f}s "
             f"→ **{jenis}**\n`{_potong(detail)}`"
+        )
+        baris.append(
+            "→ Aneh: balasan kecil tadi masuk, tapi balasan besar (JSON daftar shape) "
+            "nggak sampai. Ini pola **MTU/blackhole atau throttling** di jalur host bot."
         )
     return baris
 
