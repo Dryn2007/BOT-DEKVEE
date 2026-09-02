@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands, tasks
 import oci
 import asyncio
+import os
 import socket
 import ssl
 import platform
@@ -42,8 +43,43 @@ LOOP_MINUTES = 2
 PETUNJUK_JARINGAN_SETELAH = 5     # gagal jaringan berturut-turut sebelum kasih petunjuk
 MAX_DETAIL_CHAR = 350             # potong detail error biar pesan Discord nggak kepanjangan
 PROBE_TIMEOUT = 10.0              # timeout cek TCP mentah di !ceknet (biar cepat jawabnya)
+PROBE_TIMEOUT_KLAMP = 20.0        # uji MSS dikasih sabar lebih: jalur lossy sering butuh SYN ulang
 PROBE_READ_TIMEOUT = 12.0         # timeout nunggu balasan HTTP di probe !ceknet
 MSS_CLAMP = 1200                  # ukuran segmen TCP buat nguji dugaan MTU blackhole
+KONTROL_HOST = "discord.com"      # pembanding: jalur ini pasti kepakai bot, jadi harusnya sehat
+REGION_PEMBANDING = "ap-singapore-1"   # endpoint Oracle region lain buat misahin rute vs Oracle
+
+# Dua tombol darurat lewat env var, biar bisa dicoba di host tanpa ganti kode:
+#   OCI_PROXY=http://[user:pass@]ip:port  → panggilan Oracle dibelokin lewat proxy
+#   OCI_MSS=1200                          → segmen TCP dikecilin (kalau MTU blackhole kebukti)
+PROXY_OCI = (os.getenv("OCI_PROXY") or "").strip()
+try:
+    MSS_KLIEN = int((os.getenv("OCI_MSS") or "0").strip() or 0)
+except ValueError:
+    MSS_KLIEN = 0
+JALUR_KHUSUS = []                 # catatan tombol darurat yang benar-benar kepasang
+
+
+def _mss_didukung():
+    """Cek beneran bisa nggak MSS diclamp di OS ini — jangan cuma lihat konstantanya.
+
+    Di Windows `socket.TCP_MAXSEG` ADA nilainya tapi setsockopt-nya ditolak
+    (WinError 10042). Kalau cuma pakai hasattr, opsi ini kepasang di adapter HTTP
+    dan SEMUA request Oracle langsung gagal.
+    """
+    if not hasattr(socket, "TCP_MAXSEG"):
+        return False
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_MAXSEG, MSS_CLAMP)
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+MSS_DIDUKUNG = _mss_didukung()
 
 # Hati-hati: `oci.exceptions.RequestException` TIDAK menangkap `ConnectTimeout`.
 # Keduanya sama-sama turunan requests bawaan SDK (`BaseRequestException`), tapi
@@ -78,6 +114,65 @@ def _bikin_retry_strategy():
     ).get_retry_strategy()
 
 
+def _socket_options(mss):
+    """Opsi socket buat clamp MSS. Opsi yang OS-nya nggak dukung dibuang.
+
+    Penting: begitu `socket_options` dikirim ke pool urllib3, daftar bawaannya
+    (TCP_NODELAY) ketimpa — jadi harus ditulis ulang di sini.
+    """
+    opsi = []
+    if hasattr(socket, "TCP_NODELAY"):
+        opsi.append((socket.IPPROTO_TCP, socket.TCP_NODELAY, 1))
+    if MSS_DIDUKUNG:
+        opsi.append((socket.IPPROTO_TCP, socket.TCP_MAXSEG, mss))
+    return opsi
+
+
+def _pasang_jalur(client):
+    """Terapin proxy / clamp MSS ke session requests-nya SDK. Return catatan aktif.
+
+    Dipisah dari pembuatan klien biar kalau salah satunya gagal, war-nya tetap
+    hidup pakai jalur normal.
+    """
+    catatan = []
+    session = getattr(getattr(client, "base_client", None), "session", None)
+    if session is None:
+        return catatan
+
+    if PROXY_OCI:
+        try:
+            session.proxies.update({"http": PROXY_OCI, "https": PROXY_OCI})
+            # Host saja yang dicatat: URL-nya bisa bawa user:password.
+            catatan.append(f"proxy {urlsplit(PROXY_OCI).hostname or 'aktif'}")
+        except Exception as e:
+            _log(f"⚠️ [OracleWar] gagal pasang proxy: {e}")
+
+    if MSS_KLIEN and MSS_DIDUKUNG:
+        # Adapter-nya nggak diganti, cuma disuntik opsi socket: SDK OCI mount
+        # adapter sendiri (OCIHTTPAdapter) dan itu jangan sampai kebuang.
+        # Catatan: opsi ini kena sambungan langsung; kalau lewat proxy, MSS-nya
+        # ditentukan sambungan ke proxy-nya.
+        dipasang = False
+        for adapter in list(session.adapters.values()):
+            pool = getattr(adapter, "poolmanager", None)
+            kw = getattr(pool, "connection_pool_kw", None)
+            if isinstance(kw, dict):
+                kw["socket_options"] = _socket_options(MSS_KLIEN)
+                try:
+                    pool.clear()   # pool lama (kalau ada) dibikin ulang pakai opsi baru
+                except Exception:
+                    pass
+                dipasang = True
+        if dipasang:
+            catatan.append(f"MSS {MSS_KLIEN}")
+        else:
+            _log("⚠️ [OracleWar] nggak nemu poolmanager buat clamp MSS, dilewat.")
+    elif MSS_KLIEN:
+        _log("⚠️ [OracleWar] OS ini nggak bisa clamp MSS, OCI_MSS diabaikan.")
+
+    return catatan
+
+
 try:
     config = oci.config.from_file(file_location="config")
     compute_client = oci.core.ComputeClient(
@@ -91,6 +186,14 @@ except Exception as e:
     config = None
     compute_client = None
     OCI_READY = False
+
+# Dipisah dari blok di atas: gagal masang tombol darurat jangan sampai matiin
+# fitur Oracle-nya — mendingan jalan pakai jalur normal.
+if OCI_READY:
+    try:
+        JALUR_KHUSUS = _pasang_jalur(compute_client)
+    except Exception as e:
+        _log(f"⚠️ [OracleWar] gagal pasang jalur khusus, pakai jalur normal: {e}")
 
 compartment_id = "ocid1.tenancy.oc1..aaaaaaaavotqdahvfb5b2epny5764gvur36v47vvhibzjw2glvghkjwptycq"
 availability_domain = "Hpyp:AP-BATAM-1-AD-1"
@@ -192,9 +295,10 @@ def _host_endpoint():
 def _info_host():
     """Rangkuman host + setelan efektif klien, biar nggak nebak-nebak versi."""
     timeout = getattr(compute_client.base_client, "timeout", None) if compute_client else None
+    ekstra = f" · jalur `{', '.join(JALUR_KHUSUS)}`" if JALUR_KHUSUS else ""
     return (
         f"🧰 `{platform.system()} {platform.machine()}` · Python `{platform.python_version()}` "
-        f"· oci `{getattr(oci, '__version__', '?')}` · timeout klien `{timeout}`"
+        f"· oci `{getattr(oci, '__version__', '?')}` · timeout klien `{timeout}`{ekstra}"
     )
 
 
@@ -207,16 +311,16 @@ def _bikin_socket(ip, mss=None, timeout=PROBE_TIMEOUT):
     keluarga = socket.AF_INET6 if ":" in ip else socket.AF_INET
     s = socket.socket(keluarga, socket.SOCK_STREAM)
     s.settimeout(timeout)
-    if mss and hasattr(socket, "TCP_MAXSEG"):
+    if mss and MSS_DIDUKUNG:
         try:
             s.setsockopt(socket.IPPROTO_TCP, socket.TCP_MAXSEG, mss)
         except OSError:
-            pass  # Windows nolak setelan ini, nggak apa-apa
+            pass  # OS-nya nolak setelan ini, nggak apa-apa
     s.connect((ip, 443))
     return s
 
 
-def _probe_https(host, ip, mss=None):
+def _probe_https(host, ip, mss=None, timeout=PROBE_TIMEOUT):
     """TLS handshake + satu GET tanpa auth. Return dict fase/durasi/hasil.
 
     Endpoint Oracle bakal jawab 401 buat request tanpa tanda tangan, dan itu
@@ -225,7 +329,7 @@ def _probe_https(host, ip, mss=None):
     hasil = {"fase": "TCP", "tcp": 0.0, "tls": 0.0, "http": 0.0, "info": ""}
     t0 = time.perf_counter()
     try:
-        mentah = _bikin_socket(ip, mss=mss)
+        mentah = _bikin_socket(ip, mss=mss, timeout=timeout)
     except Exception as e:
         hasil["tcp"] = time.perf_counter() - t0
         hasil["info"] = f"{type(e).__name__}: {e}"
@@ -263,6 +367,117 @@ def _probe_https(host, ip, mss=None):
         except Exception:
             pass
     return hasil
+
+
+def _probe_tls(host, timeout=PROBE_TIMEOUT):
+    """DNS + TCP + handshake TLS ke satu host, tanpa kirim request apa pun.
+
+    Dipakai sebagai pembanding: handshake TLS itu tukar-menukar paket besar
+    (sertifikat server), jadi cukup buat mendeteksi jalur yang cuma bisa
+    ngirim paket kecil.
+    """
+    hasil = {"ok": False, "tahap": "DNS", "detik": 0.0, "info": ""}
+    t0 = time.perf_counter()
+    mentah = None
+    try:
+        ip = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)[0][4][0]
+        hasil["tahap"] = "TCP"
+        mentah = _bikin_socket(ip, timeout=timeout)
+        hasil["tahap"] = "handshake TLS"
+        with ssl.create_default_context().wrap_socket(mentah, server_hostname=host):
+            hasil["ok"] = True
+            hasil["tahap"] = "OK"
+    except Exception as e:
+        hasil["info"] = f"{type(e).__name__}: {e}"
+    finally:
+        if mentah is not None:
+            try:
+                mentah.close()
+            except Exception:
+                pass
+    hasil["detik"] = time.perf_counter() - t0
+    return hasil
+
+
+def _cek_pembanding(host_oracle):
+    """Kalau jalur ke Oracle mati: internet host-nya yang rusak, atau rutenya doang?
+
+    Bot ini jelas bisa ngobrol sama Discord (pesan `!ceknet`-nya nyampe), jadi
+    kalau handshake ke Discord lancar tapi ke Oracle mandek, MTU host-nya sehat
+    dan yang bermasalah rute ke prefix Oracle — itu di luar jangkauan kode.
+    """
+    baris = []
+    kontrol = _probe_tls(KONTROL_HOST)
+    if kontrol["ok"]:
+        baris.append(
+            f"✅ Pembanding `{KONTROL_HOST}`: handshake TLS {kontrol['detik']:.2f}s — "
+            f"internet & MTU host-nya sendiri sehat."
+        )
+    else:
+        baris.append(
+            f"❌ Pembanding `{KONTROL_HOST}`: mandek di {kontrol['tahap']} setelah "
+            f"{kontrol['detik']:.2f}s."
+        )
+
+    host_lain = f"iaas.{REGION_PEMBANDING}.oraclecloud.com"
+    lain = _probe_tls(host_lain)
+    if lain["ok"]:
+        baris.append(
+            f"✅ Oracle region lain (`{REGION_PEMBANDING}`): handshake {lain['detik']:.2f}s."
+        )
+    else:
+        baris.append(
+            f"❌ Oracle region lain (`{REGION_PEMBANDING}`): mandek di {lain['tahap']} "
+            f"setelah {lain['detik']:.2f}s."
+        )
+
+    if not kontrol["ok"]:
+        baris.append(
+            "→ Pembanding netral ikut mandek: yang rusak jaringan host-nya sendiri, "
+            "bukan Oracle. Lapor ke provider hosting atau pindah host."
+        )
+    elif lain["ok"]:
+        baris.append(
+            f"→ Host bisa TLS ke mana-mana termasuk Oracle region lain, cuma rute ke "
+            f"`{host_oracle}` yang mati. Tenancy-nya kepaku di Batam, jadi nggak bisa "
+            f"dialihin ke region lain."
+        )
+    else:
+        baris.append(
+            "→ Internet host oke, tapi semua endpoint Oracle mandek: rute host bot ke "
+            "jaringan Oracle yang diblok/rusak. Nggak ada setelan di bot yang bisa nambal."
+        )
+
+    baris.append(
+        f"→ Dua jalan keluar: (1) jalanin bot dari host/jaringan lain — dari komputer "
+        f"kamu endpoint ini kebuka ~0.02s, atau (2) set env `OCI_PROXY=http://ip:port` "
+        f"di host pakai proxy yang jalurnya bersih; cuma panggilan Oracle yang lewat situ."
+    )
+    return baris
+
+
+def _pecah_pesan(judul, baris, batas=1900):
+    """Bagi laporan jadi beberapa pesan Discord, tanpa ngorbanin baris terakhir.
+
+    Sebelumnya laporan dipotong keras di 1900 karakter — dan yang kebuang justru
+    bagian paling penting, yaitu kesimpulan & saran di akhir. Sekarang dipecah
+    per baris; kalau kepanjangan banget, bagian tengahnya yang dilewat.
+    """
+    pesan = []
+    sekarang = judul
+    for b in baris:
+        if len(b) > batas:
+            b = b[:batas - 1] + "…"
+        if sekarang and len(sekarang) + 1 + len(b) > batas:
+            pesan.append(sekarang)
+            sekarang = b
+        else:
+            sekarang = f"{sekarang}\n{b}" if sekarang else b
+    if sekarang:
+        pesan.append(sekarang)
+    if len(pesan) > 3:
+        pesan = pesan[:2] + ["…(bagian tengah dilewat)\n" + pesan[-1]]
+    return pesan or ["(laporan kosong)"]
 
 
 def _baca_probe(hasil, label):
@@ -317,30 +532,37 @@ def _diagnosa_jaringan():
             "gejala connect timeout kayak sekarang."
         )
 
-    # 2. TCP mentah 2x, biar kelihatan kalau waktunya naik-turun (indikasi loss)
+    # 2. TCP mentah 3x: yang dicari bukan cuma bisa/nggak, tapi konsistensinya
     ip_utama = alamat[0][1]
     waktu_tcp = []
-    for _ in range(2):
+    gagal_tcp = 0
+    galat_tcp = ""
+    for _ in range(3):
         t = time.perf_counter()
         try:
             _bikin_socket(ip_utama).close()
             waktu_tcp.append(time.perf_counter() - t)
         except Exception as e:
-            baris.append(
-                f"❌ TCP ke `{ip_utama}` gagal setelah {time.perf_counter() - t:.2f}s — "
-                f"`{type(e).__name__}: {e}`"
-            )
+            gagal_tcp += 1
+            galat_tcp = f"{type(e).__name__}: {e}"
     if not waktu_tcp:
+        baris.append(f"❌ TCP ke `{ip_utama}` gagal 3x — `{_potong(galat_tcp)}`")
         baris.append(
-            "→ DNS jalan tapi port 443 nggak kebuka: **egress host bot yang kena blok / "
-            "nggak ada rute** ke Oracle. Bukan capacity, bukan kredensial. Solusinya "
-            "jalanin bot dari host/jaringan lain."
+            "→ DNS jalan tapi port 443 nggak kebuka sama sekali: **egress host bot kena "
+            "blok / nggak ada rute** ke Oracle. Bukan capacity, bukan kredensial."
         )
+        baris.extend(_cek_pembanding(host))
         return baris
 
     catatan = " / ".join(f"{d:.2f}s" for d in waktu_tcp)
-    baris.append(f"✅ TCP ke `{ip_utama}` nyambung ({catatan})")
-    if min(waktu_tcp) > 0.6:
+    tambahan = f", {gagal_tcp}x timeout" if gagal_tcp else ""
+    baris.append(f"✅ TCP ke `{ip_utama}` nyambung ({catatan}{tambahan})")
+    if gagal_tcp:
+        baris.append(
+            f"⚠️ {gagal_tcp} dari 3 percobaan TCP malah timeout — paketnya kebuang di "
+            f"jalan, bukan cuma lambat."
+        )
+    elif min(waktu_tcp) > 0.6:
         baris.append(
             f"⚠️ Handshake TCP {min(waktu_tcp):.2f}s itu kelewat lama — biasanya ada "
             f"paket SYN yang hilang dan dikirim ulang. Jalurnya jelek, bukan cuma jauh."
@@ -353,20 +575,30 @@ def _diagnosa_jaringan():
     # 3b. Ulang dengan MSS diclamp. Kalau yang ini jalan padahal tadi gagal,
     #     dugaan MTU blackhole-nya kepegang.
     if hasil["fase"] != "OK":
-        klamp = _probe_https(host, ip_utama, mss=MSS_CLAMP)
+        klamp = _probe_https(host, ip_utama, mss=MSS_CLAMP, timeout=PROBE_TIMEOUT_KLAMP)
         baris.extend(_baca_probe(klamp, f"MSS {MSS_CLAMP}"))
-        if klamp["fase"] == "OK":
+        if klamp["fase"] == "OK" and MSS_DIDUKUNG:
             baris.append(
                 f"🎯 **Ketemu:** paket penuh hilang, paket kecil lolos → **MTU/MSS "
-                f"blackhole** di jalur host bot. Bilang aja, saya kunci MSS klien ke "
-                f"{MSS_CLAMP} biar war-nya jalan tanpa pindah host."
+                f"blackhole** di jalur host bot. Set env `OCI_MSS={MSS_CLAMP}` di host, "
+                f"war-nya jalan tanpa pindah host."
             )
             return baris
-        baris.append(
-            "→ Diclamp pun tetap mati, jadi bukan sekadar MTU: jalur host bot ke "
-            "Oracle memang nggak bisa dipakai. Paling cepat: jalanin bot dari "
-            "host/jaringan lain (dari komputer kamu endpoint ini kebuka ~0.02s)."
-        )
+        if not MSS_DIDUKUNG:
+            baris.append(
+                "⚠️ OS host ini nggak bisa clamp MSS, jadi uji di atas sebenarnya sama "
+                "aja dengan yang bawaan — dugaan MTU belum kejawab."
+            )
+        elif klamp["fase"] == "TCP":
+            baris.append(
+                "⚠️ Uji MSS nggak kebaca: sambungan TCP-nya sendiri mati duluan, jadi "
+                "dugaan MTU belum kejawab — jalurnya kelewat lossy buat dites."
+            )
+        else:
+            baris.append(
+                "→ Diclamp pun mandek di fase yang sama, jadi bukan sekadar MTU."
+            )
+        baris.extend(_cek_pembanding(host))
         return baris
 
     # 4. Panggilan API bertanda tangan (read-only, nggak bikin resource apa pun)
@@ -582,13 +814,19 @@ class OracleWar(commands.Cog):
         except Exception as e:
             baris = [f"⚠️ Diagnosa sendiri malah error: `{type(e).__name__}: {e}`"]
 
-        isi = f"🩺 **Diagnosa koneksi Oracle** `[{_jam()}]`\n" + "\n".join(baris)
-        if len(isi) > 1900:
-            isi = isi[:1900] + "\n…(dipotong)"
+        potongan = _pecah_pesan(f"🩺 **Diagnosa koneksi Oracle** `[{_jam()}]`", baris)
         try:
-            await pesan.edit(content=isi)
+            await pesan.edit(content=potongan[0])
         except Exception:
-            await ctx.send(isi)
+            try:
+                await ctx.send(potongan[0])
+            except Exception:
+                return
+        for lanjutan in potongan[1:]:
+            try:
+                await ctx.send(lanjutan)
+            except Exception:
+                break
 
 
 # ==========================================
