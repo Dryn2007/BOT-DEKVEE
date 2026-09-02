@@ -2,7 +2,11 @@ import discord
 from discord.ext import commands, tasks
 import oci
 import asyncio
+import socket
+import time
+import re
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 WIB = timezone(timedelta(hours=7))
 
@@ -35,6 +39,7 @@ RETRY_TOTAL_SECONDS = 75          # tetap di bawah interval loop (2 menit)
 LOOP_MINUTES = 2
 PETUNJUK_JARINGAN_SETELAH = 5     # gagal jaringan berturut-turut sebelum kasih petunjuk
 MAX_DETAIL_CHAR = 350             # potong detail error biar pesan Discord nggak kepanjangan
+PROBE_TIMEOUT = 10.0              # timeout cek TCP mentah di !ceknet (biar cepat jawabnya)
 
 # Hati-hati: `oci.exceptions.RequestException` TIDAK menangkap `ConnectTimeout`.
 # Keduanya sama-sama turunan requests bawaan SDK (`BaseRequestException`), tapi
@@ -96,17 +101,42 @@ def _jam():
     return datetime.now(WIB).strftime("%H:%M:%S")
 
 
-def try_create_instance():
-    """Coba bikin instance sekali.
+def _potong(teks):
+    """Pendekin detail error biar pesan Discord nggak nabrak batas 2000 karakter."""
+    return teks if len(teks) <= MAX_DETAIL_CHAR else teks[:MAX_DETAIL_CHAR] + "…"
 
-    Return (jenis, detail) — jenis salah satu dari:
-      SUCCESS  : instance jadi
+
+def _klasifikasi_error(e):
+    """Terjemahin exception OCI jadi (jenis, detail). Dipakai war & !ceknet.
+
+    Jenisnya salah satu dari:
       CAPACITY : stok shape di AD itu habis (normal, tinggal nunggu)
       NETWORK  : request nggak sampai ke Oracle (timeout/koneksi putus)
       LIMIT    : kena throttle Oracle (HTTP 429)
       AUTH     : kredensial/izin ditolak (nggak akan sembuh sendiri)
       ERROR    : sisanya
     """
+    if isinstance(e, oci.exceptions.ServiceError):
+        # Sampai ke Oracle, tapi ditolak/gagal di sisi mereka.
+        detail = f"HTTP {e.status} {e.code}: {e.message}"
+        teks = f"{e.code} {e.message}".lower()
+        if "capacity" in teks:
+            return "CAPACITY", detail
+        if e.status == 429:
+            return "LIMIT", detail
+        if e.status in (401, 403):
+            return "AUTH", detail
+        return "ERROR", detail
+
+    if isinstance(e, ERROR_JARINGAN):
+        # ConnectTimeout / connection error: request BELUM sampai ke Oracle.
+        return "NETWORK", str(e)
+
+    return "ERROR", f"{type(e).__name__}: {e}"
+
+
+def try_create_instance():
+    """Coba bikin instance sekali. Return (jenis, detail); SUCCESS kalau jadi."""
     try:
         compute_client.launch_instance(
             oci.core.models.LaunchInstanceDetails(
@@ -131,25 +161,107 @@ def try_create_instance():
             )
         )
         return "SUCCESS", ""
-
-    except oci.exceptions.ServiceError as e:
-        # Sampai ke Oracle, tapi ditolak/gagal di sisi mereka.
-        detail = f"HTTP {e.status} {e.code}: {e.message}"
-        teks = f"{e.code} {e.message}".lower()
-        if "capacity" in teks:
-            return "CAPACITY", detail
-        if e.status == 429:
-            return "LIMIT", detail
-        if e.status in (401, 403):
-            return "AUTH", detail
-        return "ERROR", detail
-
-    except ERROR_JARINGAN as e:
-        # ConnectTimeout / connection error: request BELUM sampai ke Oracle.
-        return "NETWORK", str(e)
-
     except Exception as e:
-        return "ERROR", f"{type(e).__name__}: {e}"
+        return _klasifikasi_error(e)
+
+
+def _host_endpoint():
+    """Host endpoint OCI yang dipakai klien, buat dites mentah-mentah.
+
+    Endpoint di SDK masih bentuk template — `https://iaas.ap-batam-1.
+    {dualStack?ds.oci.:}oraclecloud.com/20160918` — dan placeholder-nya baru
+    diisi saat request dikirim. Jadi kurung kurawalnya dibuang dulu, kalau
+    hasilnya masih aneh baru jatuh ke pola nama standar per region.
+    """
+    endpoint = ""
+    if compute_client is not None:
+        endpoint = getattr(compute_client.base_client, "endpoint", "") or ""
+    host = urlsplit(re.sub(r"\{[^}]*\}", "", endpoint)).hostname
+    if host:
+        host = re.sub(r"\.{2,}", ".", host).strip(".")
+    if host and "{" not in host:
+        return host
+    wilayah = (config or {}).get("region") or "ap-batam-1"
+    return f"iaas.{wilayah}.oraclecloud.com"
+
+
+def _diagnosa_jaringan():
+    """Cek jalur ke Oracle DARI host tempat bot jalan: DNS -> TCP 443 -> API.
+
+    Gunanya misahin tiga kemungkinan yang gejalanya sama-sama "timeout":
+    resolver DNS host, egress host ke port 443, atau kredensial/Oracle-nya.
+    """
+    host = _host_endpoint()
+    baris = [f"🎯 Endpoint: `{host}:443`"]
+
+    # 1. DNS
+    t = time.perf_counter()
+    try:
+        info = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+    except Exception as e:
+        baris.append(
+            f"❌ **DNS gagal** setelah {time.perf_counter() - t:.2f}s — "
+            f"`{type(e).__name__}: {e}`"
+        )
+        baris.append("→ Host bot nggak bisa resolve nama Oracle. Cek resolver/DNS di sana.")
+        return baris
+
+    alamat = list(dict.fromkeys((fam, sa[0]) for fam, _, _, _, sa in info))
+    daftar = ", ".join(f"`{ip}`" for _, ip in alamat[:4])
+    baris.append(f"✅ DNS oke dalam {time.perf_counter() - t:.2f}s → {daftar}")
+    if any(fam == socket.AF_INET6 for fam, _ in alamat):
+        baris.append(
+            "⚠️ Dapat alamat IPv6 padahal endpoint Oracle ini IPv4-only — host-nya "
+            "kelihatan IPv6-only (DNS64/NAT64). Gerbang NAT64 yang macet persis bikin "
+            "gejala connect timeout kayak sekarang."
+        )
+
+    # 2. TCP mentah ke 443
+    sukses_tcp = False
+    for _, ip in alamat[:3]:
+        t = time.perf_counter()
+        try:
+            socket.create_connection((ip, 443), timeout=PROBE_TIMEOUT).close()
+            baris.append(f"✅ TCP ke `{ip}` nyambung dalam {time.perf_counter() - t:.2f}s")
+            sukses_tcp = True
+        except Exception as e:
+            baris.append(
+                f"❌ TCP ke `{ip}` gagal setelah {time.perf_counter() - t:.2f}s — "
+                f"`{type(e).__name__}: {e}`"
+            )
+    if not sukses_tcp:
+        baris.append(
+            "→ DNS jalan tapi port 443 nggak kebuka: **egress host bot yang kena blok / "
+            "nggak ada rute** ke Oracle. Bukan capacity, bukan kredensial. Solusinya "
+            "jalanin bot dari host/jaringan lain."
+        )
+        return baris
+
+    # 3. Panggilan API read-only (nggak bikin resource apa pun)
+    if not OCI_READY:
+        baris.append("⚠️ OCI belum dikonfigurasi di host ini, panggilan API dilewat.")
+        return baris
+
+    t = time.perf_counter()
+    try:
+        resp = compute_client.list_shapes(
+            compartment_id,
+            availability_domain=availability_domain,
+            limit=1,
+            retry_strategy=oci.retry.NoneRetryStrategy(),
+        )
+        baris.append(
+            f"✅ Panggilan API read-only sukses (HTTP {resp.status}) dalam "
+            f"{time.perf_counter() - t:.2f}s — kredensial & jalur ke Oracle beres."
+        )
+        baris.append("→ Berarti kalau war masih gagal, itu murni soal stok capacity.")
+    except Exception as e:
+        jenis, detail = _klasifikasi_error(e)
+        baris.append(
+            f"❌ Panggilan API read-only gagal setelah {time.perf_counter() - t:.2f}s "
+            f"→ **{jenis}**\n`{_potong(detail)}`"
+        )
+    return baris
 
 
 # ==========================================
@@ -234,7 +346,7 @@ class OracleWar(commands.Cog):
         else:
             self.gagal_jaringan_berturut = 0
 
-        ringkas = detail if len(detail) <= MAX_DETAIL_CHAR else detail[:MAX_DETAIL_CHAR] + "…"
+        ringkas = _potong(detail)
         lagi = f"Nyoba lagi {LOOP_MINUTES} menit."
 
         if jenis == "SUCCESS":
@@ -258,7 +370,8 @@ class OracleWar(commands.Cog):
                 petunjuk = (
                     f"\n🔌 Sudah **{self.gagal_jaringan_berturut}x gagal jaringan berturut-turut** — "
                     f"kemungkinan koneksi keluar dari server tempat bot jalan yang kena blok/lambat "
-                    f"ke `oraclecloud.com`, jadi bukan Oracle-nya yang bermasalah."
+                    f"ke `oraclecloud.com`, jadi bukan Oracle-nya yang bermasalah. "
+                    f"Ketik `!ceknet` buat mastiin dari sisi mana macetnya."
                 )
             await self.set_status(
                 f"📡 `[{_jam()}]` Koneksi ke Oracle **timeout**, request belum sampai ke sana "
@@ -320,6 +433,26 @@ class OracleWar(commands.Cog):
             )
         else:
             await ctx.send("War memang sedang tidak berjalan.")
+
+    @commands.command(name="ceknet")
+    async def ceknet(self, ctx):
+        """Diagnosa: jalur ke Oracle macet di DNS, egress host, atau Oracle-nya?"""
+        if ctx.channel.id != TARGET_CHANNEL_ID:
+            return
+
+        pesan = await ctx.send("🔍 Ngecek jalur jaringan dari server tempat bot jalan...")
+        try:
+            baris = await asyncio.to_thread(_diagnosa_jaringan)
+        except Exception as e:
+            baris = [f"⚠️ Diagnosa sendiri malah error: `{type(e).__name__}: {e}`"]
+
+        isi = f"🩺 **Diagnosa koneksi Oracle** `[{_jam()}]`\n" + "\n".join(baris)
+        if len(isi) > 1900:
+            isi = isi[:1900] + "\n…(dipotong)"
+        try:
+            await pesan.edit(content=isi)
+        except Exception:
+            await ctx.send(isi)
 
 
 # ==========================================
